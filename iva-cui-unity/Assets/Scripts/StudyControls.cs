@@ -73,6 +73,16 @@ public class StudyControls : MonoBehaviour
         DetermineUserStudySceneName();
     }
 
+    private void OnEnable()
+    {
+        controllerMicButton?.action.Enable();
+    }
+
+    private void OnDisable()
+    {
+        controllerMicButton?.action.Disable();
+    }
+
     #region CUI2025_Study
 
     public static string GetUserStudySceneName()

@@ -4,7 +4,10 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/Hotel_Scene.unity
+    guid: ee1c842d3399ff8448cfc9539e2b896c
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: 1ea5066db5a5dd64990975b89190c1c5, type: 2}
     com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: 8289f59b1d0f3f842b99af9250267705, type: 2}

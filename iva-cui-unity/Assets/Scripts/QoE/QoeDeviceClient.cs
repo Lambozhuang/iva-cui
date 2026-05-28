@@ -114,11 +114,18 @@ namespace QoeDevice {
         // per-phase visibility toggling (see UpdateUiVisibility).
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
+        PressDownButton debugTaskButton;
         TMP_Text hudText;
         TMP_Text logText;
         GameObject hudGo;
         GameObject controlsRowGo;
+        GameObject debugRowGo;
         GameObject logPanelGo;
+        // True while a debug task scene is loaded outside the normal session
+        // flow (no WS, no ready, no /end-condition). Lets the toggle button
+        // know whether to load or unload, and lets UpdateUiVisibility hide the
+        // controls/HUD just like during a real RunningTask.
+        bool debugTaskActive;
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
@@ -166,6 +173,7 @@ namespace QoeDevice {
             hudLe.minHeight = ui.Sx(28); hudLe.preferredHeight = ui.Sx(28);
 
             BuildControlsRow(rootContainer);
+            if (debugMode) BuildDebugRow(rootContainer);
             if (debugMode) BuildLogPanel(rootContainer);
 
             if (ratingClient != null) {
@@ -194,6 +202,7 @@ namespace QoeDevice {
             rootContainer.gameObject.SetActive(showCanvas);
             if (hudGo != null) hudGo.SetActive(showHud);
             if (controlsRowGo != null) controlsRowGo.SetActive(showControls);
+            if (debugRowGo != null) debugRowGo.SetActive(debugMode);
             if (logPanelGo != null) logPanelGo.SetActive(debugMode);
         }
 
@@ -248,7 +257,7 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            hudGo = controlsRowGo = logPanelGo = null;
+            hudGo = controlsRowGo = debugRowGo = logPanelGo = null;
         }
 
         void BuildControlsRow(RectTransform parent) {
@@ -286,6 +295,35 @@ namespace QoeDevice {
                 le.flexibleWidth = 1f;
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
             }
+        }
+
+        // Debug-only row sitting under the controls row. Holds the Debug task
+        // toggle (and could grow more buttons later). Sized to match a single
+        // controls-row cell so it doesn't dominate vertically.
+        void BuildDebugRow(RectTransform parent) {
+            var rowGo = new GameObject("DebugRow", typeof(RectTransform));
+            debugRowGo = rowGo;
+            rowGo.transform.SetParent(parent, false);
+            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
+            hg.spacing = ui.Sx(8);
+            hg.childForceExpandWidth = true; hg.childForceExpandHeight = false;
+            hg.childControlWidth = true; hg.childControlHeight = true;
+            hg.childAlignment = TextAnchor.MiddleCenter;
+
+            // Match the controls row's per-button height for visual continuity.
+            float aspect = Mathf.Max(0.1f, controlsButtonAspect);
+            float rowInner = Mathf.Max(1f, parent.rect.width - 2f * ui.Sx(8));
+            float btnW = (rowInner - 3f * ui.Sx(8)) / 4f;
+            int btnH = Mathf.Max(ui.Sx(20), Mathf.RoundToInt(btnW / aspect));
+            var rowLe = rowGo.AddComponent<LayoutElement>();
+            rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
+
+            var rowRT = (RectTransform)rowGo.transform;
+            debugTaskButton = ui.BuildButton(rowRT, debugTaskActive ? "Stop task" : "Debug task",
+                new Color(0.45f, 0.45f, 0.5f), 18, ToggleDebugTask);
+            var le = debugTaskButton.GetComponent<LayoutElement>();
+            le.flexibleWidth = 1f;
+            le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
         }
 
         void BuildLogPanel(RectTransform parent) {
@@ -513,6 +551,47 @@ namespace QoeDevice {
             UnloadTaskScene();
             SetHud("Ending run early — calling /end-condition…");
             StartCoroutine(PostEndCondition(activeSid));
+        }
+
+        // Debug-only: load/unload the task scene without any networking
+        // (no WS, no /ready, no /end-condition, no rating). Lets the developer
+        // iterate on the in-scene XR setup, lighting, scripts, etc. without
+        // standing up the Express server. Refuses to engage during a real
+        // run so a misclick can't cross the wires.
+        public void ToggleDebugTask() {
+            if (phase == DevicePhase.RunningTask || phase == DevicePhase.TaskReceived || phase == DevicePhase.LoadingTask) {
+                QoeLog.Warn("task", $"debug task toggle ignored — already in {phase}");
+                return;
+            }
+            if (debugTaskActive) StartCoroutine(DebugTaskUnload());
+            else                 StartCoroutine(DebugTaskLoad());
+        }
+
+        IEnumerator DebugTaskLoad() {
+            QoeLog.Event("task", $"debug load: '{taskSceneName}'");
+            SetHud($"[debug] Loading '{taskSceneName}'…");
+            debugTaskActive = true;
+            UpdateDebugTaskButtonLabel();
+            UpdateUiVisibility();
+            yield return StartCoroutine(LoadTaskScene());
+            SetHud("[debug] task scene loaded — press Stop task to unload");
+        }
+
+        IEnumerator DebugTaskUnload() {
+            QoeLog.Event("task", "debug unload");
+            SetHud("[debug] unloading task scene…");
+            var op = UnloadTaskScene();
+            if (op != null) yield return op;
+            debugTaskActive = false;
+            UpdateDebugTaskButtonLabel();
+            UpdateUiVisibility();
+            SetHud("[debug] task scene unloaded");
+        }
+
+        void UpdateDebugTaskButtonLabel() {
+            if (debugTaskButton == null) return;
+            var lbl = debugTaskButton.GetComponentInChildren<TMP_Text>();
+            if (lbl != null) lbl.text = debugTaskActive ? "Stop task" : "Debug task";
         }
 
         public void AbandonRun() {

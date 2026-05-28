@@ -343,8 +343,7 @@ namespace QoeDevice {
         }
 
         IEnumerator LoadThenStart() {
-            var op = LoadTaskScene();
-            if (op != null) yield return op;
+            yield return StartCoroutine(LoadTaskScene());
             QoeLog.Event("ws", $"sending ready for run {activeRunId}");
             SendJson(new { type = WsType.Ready });
             CloseWsIntentional();
@@ -526,29 +525,46 @@ namespace QoeDevice {
         }
 
         // ── Task scene load/unload ────────────────────────────────────────
-        AsyncOperation LoadTaskScene() {
+        // Sequenced load to avoid a rig-binding race: Hotel_Scene's Awake/Start
+        // (XROrigin discovery in ApplyVRSettings, TrackedPoseDriver wiring, mic
+        // handler, etc.) must run with only ONE rig active in the world. If we
+        // disable the shell rig after activation, both rigs were briefly enabled
+        // when Hotel's scripts ran — Hotel's TrackedPoseDriver then fails to
+        // claim the HMD pose and the camera renders at floor height with no
+        // tracking. So:
+        //   1. Start the additive load with allowSceneActivation = false.
+        //   2. Wait until Unity reports load progress 0.9 (loaded but parked).
+        //   3. Disable the shell rig — this leaves the world with zero active
+        //      rigs for one frame, but no Hotel script has run yet.
+        //   4. Flip allowSceneActivation = true. Hotel's Awake/Start now runs
+        //      against a clean world and binds correctly to its own rig.
+        IEnumerator LoadTaskScene() {
             if (string.IsNullOrEmpty(taskSceneName)) {
                 QoeLog.Warn("task", "taskSceneName is empty — skipping load");
-                return null;
+                yield break;
             }
             if (taskSceneLoaded) {
                 QoeLog.Warn("task", $"scene '{taskSceneName}' already loaded — unloading first");
-                SceneManager.UnloadSceneAsync(taskSceneName);
+                yield return SceneManager.UnloadSceneAsync(taskSceneName);
                 taskSceneLoaded = false;
             }
             var op = SceneManager.LoadSceneAsync(taskSceneName, LoadSceneMode.Additive);
-            op.completed += _ => {
-                taskSceneLoaded = true;
-                var loaded = SceneManager.GetSceneByName(taskSceneName);
-                if (loaded.IsValid()) SceneManager.SetActiveScene(loaded);
-                // Hand off the rig: shell rig off, task rig (in the just-
-                // loaded scene) takes over Camera.main and AudioListener.
-                // The canvas itself lives in the shell scene and stays on
-                // — but its follower must re-resolve to the new camera.
-                if (shellRig != null) shellRig.SetActive(false);
-                RetargetCanvasFollowerToActiveCamera();
-            };
-            return op;
+            op.allowSceneActivation = false;
+            // Unity stalls progress at 0.9 while waiting for activation.
+            while (op.progress < 0.9f) yield return null;
+
+            if (shellRig != null) shellRig.SetActive(false);
+            // One frame for the disable to settle (XR plugin re-evaluates the
+            // active TrackedPoseDriver / camera at end-of-frame).
+            yield return null;
+
+            op.allowSceneActivation = true;
+            while (!op.isDone) yield return null;
+
+            taskSceneLoaded = true;
+            var loaded = SceneManager.GetSceneByName(taskSceneName);
+            if (loaded.IsValid()) SceneManager.SetActiveScene(loaded);
+            RetargetCanvasFollowerToActiveCamera();
         }
 
         AsyncOperation UnloadTaskScene() {

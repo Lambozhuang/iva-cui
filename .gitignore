@@ -232,3 +232,9 @@ cython_debug/
 ### Project specific ###
 /iva-cui-backend/python_middleware/timings
 /iva-cui-backend/python_middleware/static/
+
+# VS Code workspace settings
+.vscode/
+
+# Unity Burst compiler debug artifacts
+AvatarLLM_BurstDebugInformation_DoNotShip/

@@ -11,10 +11,27 @@ import time
 from TTS import _make_speech
 from conversation_handler import ConversationHandler
 
-# LLM_CLIENT_NAME = "llamafile_llama3"
+# ANSI colour codes for conversation logging
+_CYAN   = "\033[96m"
+_GREEN  = "\033[92m"
+_YELLOW = "\033[93m"
+_RESET  = "\033[0m"
+_BOLD   = "\033[1m"
+_DIM    = "\033[2m"
+
+
+def _log_turn(role: str, user_text: str, agent_text: str) -> None:
+    """Print a human-readable conversation turn to stdout."""
+    sep = _DIM + "─" * 60 + _RESET
+    print(sep)
+    print(f"{_BOLD}{_CYAN}[HUMAN → {role}]{_RESET}  {user_text}")
+    print(f"{_BOLD}{_GREEN}[{role} → HUMAN]{_RESET}  {agent_text}")
+    print(sep)
+
+LLM_CLIENT_NAME = "llamafile_llama3"
 # LLM_CLIENT_NAME = "openai_4"
 # LLM_CLIENT_NAME = "openai_4mini"
-LLM_CLIENT_NAME = "ollama"
+# LLM_CLIENT_NAME = "ollama"
 
 ON_THIS_DEVICE = False
 
@@ -67,6 +84,8 @@ async def speak(
     _st = time.time()
     llm_response, next_user_task = handler.process_user_message(role, text)
     _llm_processing_duration = (time.time() - _st) * 1000
+
+    _log_turn(role, text, llm_response)
 
     _st = time.time()
     voice, rate = handler.get_role_voice(role)

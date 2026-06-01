@@ -8,7 +8,7 @@ def load_openai_key():
 
 
 class OpenAIClient_llama3:
-    def __init__(self, host_address="http://127.0.0.1:8082/v1"):
+    def __init__(self, host_address="http://192.168.50.147:8082/v1"):
         self.host_address = host_address
         self.client = OpenAI(
             base_url=self.host_address,
@@ -61,7 +61,7 @@ class OpenAIClient_gpt4o_mini:
 
 
 class OllamaClient:
-    def __init__(self, host_address="http://127.0.0.1:11434"):
+    def __init__(self, host_address="http://0.0.0.0:11434"):
         self.client = Client(host=host_address)
 
     def chat(self, messages, temperature=0.5, max_tokens=None):

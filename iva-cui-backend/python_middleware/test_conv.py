@@ -7,8 +7,8 @@ NEON_GREEN = "\033[92m"
 R = "\033[91m"
 RESET = "\033[0m"
 
-# LLM_CLIENT_NAME = "llamafile_llama3"
-LLM_CLIENT_NAME = "ollama"
+LLM_CLIENT_NAME = "llamafile_llama3"
+# LLM_CLIENT_NAME = "ollama"
 
 handler = ConversationHandler("Shirts", LLM_CLIENT_NAME)
 curr_role = "agent1"

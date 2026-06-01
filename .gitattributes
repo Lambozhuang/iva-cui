@@ -1,0 +1,24 @@
+# Normalize line endings to LF on commit (works even when edited on Windows)
+* text=auto eol=lf
+
+# Explicitly binary — never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.pb binary
+*.asset -text
+*.unity -text
+*.prefab -text
+*.mat -text
+*.fbx -text
+*.dll binary
+*.exe binary

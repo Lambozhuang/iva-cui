@@ -1,5 +1,9 @@
+using System.Collections;
 using System.IO;
 using UnityEngine;
+#if UNITY_ANDROID && !UNITY_EDITOR
+using UnityEngine.Android;
+#endif
 
 public class MicrophoneHandler : MonoBehaviour
 {
@@ -25,32 +29,46 @@ public class MicrophoneHandler : MonoBehaviour
     private int startSample = 0;
     private int endSample = 0;
 
-    private void Start()
+    private IEnumerator Start()
     {
-        if (Microphone.devices.Length > 0)
-        {
-            Debug.Log($"Microphone is currently set to {selectedMicString}");
-        }
-        else
-        {
-            Debug.LogError("No microphone devices available.");
-        }
-
-        // the feedbackAudioSource will be the one of the two that is not null and is enabled
         if (vrAudioSrc != null && vrAudioSrc.isActiveAndEnabled)
-        {
             feedbackAudioSource = vrAudioSrc;
-        }
         else if (pcAudioSrc != null && pcAudioSrc.isActiveAndEnabled)
-        {
             feedbackAudioSource = pcAudioSrc;
-        }
         else
-        {
             Debug.LogError("No feedback audio source available.");
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (!Permission.HasUserAuthorizedPermission(Permission.Microphone))
+        {
+            Permission.RequestUserPermission(Permission.Microphone);
+            // Poll until the user responds (up to 30 s)
+            float elapsed = 0f;
+            while (!Permission.HasUserAuthorizedPermission(Permission.Microphone) && elapsed < 30f)
+            {
+                yield return new WaitForSeconds(0.5f);
+                elapsed += 0.5f;
+            }
         }
 
-        Invoke(nameof(StartMicInput), .5f); // delay to avoid null reference in case mic changes by another script
+        if (!Permission.HasUserAuthorizedPermission(Permission.Microphone))
+        {
+            Debug.LogError("Microphone permission denied.");
+            yield break;
+        }
+
+        yield return null; // one frame for permission to propagate
+#else
+        yield return null;
+#endif
+
+        if (Microphone.devices.Length > 0)
+            Debug.Log($"Microphone devices available. Selected: {selectedMicString}");
+        else
+            Debug.LogError("No microphone devices available.");
+
+        yield return new WaitForSeconds(0.5f);
+        StartMicInput();
     }
 
     public void StartMicInputAfterMicChange()
@@ -60,24 +78,44 @@ public class MicrophoneHandler : MonoBehaviour
             Debug.LogWarning("Application is not playing. Microphone input will not start.");
         }
 
-        // End the current recording if it is still going
         StopRecording();
         Microphone.End(micStringThatIsRecording);
 
         StartMicInput();
     }
 
+    // Returns selectedMicString if it exists on this platform, otherwise null (default device).
+    private string ResolveDeviceName()
+    {
+        if (string.IsNullOrEmpty(selectedMicString))
+            return null;
+
+        foreach (string device in Microphone.devices)
+        {
+            if (device == selectedMicString)
+                return selectedMicString;
+        }
+
+        Debug.LogWarning($"Microphone '{selectedMicString}' not found on this platform. Falling back to default device.");
+        return null;
+    }
+
     private void StartMicInput()
     {
-        recording = Microphone.Start(selectedMicString, true, maxRecordingTime, 16000);
-        micStringThatIsRecording = selectedMicString;
+        string deviceToUse = ResolveDeviceName();
+        recording = Microphone.Start(deviceToUse, true, maxRecordingTime, 16000);
+        micStringThatIsRecording = deviceToUse;
+
+        // Always reset the indicator regardless of success, so it can't get stuck on.
+        ToggleMicIsRecordingUI(false);
+
         if (recording == null)
         {
             Debug.LogError("Failed to start microphone.");
             return;
         }
-        ToggleMicIsRecordingUI(false);
-        Debug.Log("Microphone started and is recording continuously...");
+
+        Debug.Log($"Microphone started (device: '{deviceToUse ?? "default"}') and is recording continuously.");
     }
 
     public void StartRecording()
@@ -125,8 +163,7 @@ public class MicrophoneHandler : MonoBehaviour
         var handler = new AudioMemoryStreamHandler();
         MemoryStream audioStream = handler.PrepareAudioStream(finalClip);
 
-        var audioBytes = audioStream.ToArray();
-        return audioBytes;
+        return audioStream.ToArray();
     }
 
     private AudioClip CutClipAtSampleRange(AudioClip recordedClip, int startSample, int sampleCount)
@@ -142,8 +179,7 @@ public class MicrophoneHandler : MonoBehaviour
     {
         var handler = new AudioMemoryStreamHandler();
         MemoryStream audioStream = handler.PrepareAudioStream(inputClip);
-        var audioBytes = audioStream.ToArray();
-        return audioBytes;
+        return audioStream.ToArray();
     }
 
     private void PlayMicSound(bool value)

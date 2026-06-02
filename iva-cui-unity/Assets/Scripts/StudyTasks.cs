@@ -140,7 +140,7 @@ public class StudyTasks : MonoBehaviour
         taskTexts = FindObjectsOfType<TMP_Text>().Where(t => t.name == "task_ui_text").ToList();
 
         // all gameobjects name "mic_active_object" need to be found even if they are disabled
-        micActiveObjects = FindObjectsOfType<RectTransform>().Where(t => t.name == "mic_active_object").ToList();
+        micActiveObjects = FindObjectsOfType<RectTransform>(true).Where(t => t.name == "mic_active_object").ToList();
 
         // Initialize the dictionary
         inventorySprites = new Dictionary<InventoryItem, Sprite>

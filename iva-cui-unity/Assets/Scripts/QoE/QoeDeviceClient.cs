@@ -92,6 +92,12 @@ namespace QoeDevice {
         [Tooltip("One debug button is built per entry. Each additively loads/unloads its scene. Must be in Build Settings.")]
         public string[] debugScenes = { "City_Scene", "Hotel_Scene", "Museum_Scene" };
 
+        [Header("Screen fade (VR comfort)")]
+        [Tooltip("Fades the view to black before a scene load so the headset compositor reprojects black during the main-thread activation freeze, instead of a frozen, head-tracked world (the nausea trigger). Auto-created on this GameObject if left null.")]
+        public ScreenFader fader;
+        [Tooltip("Seconds for each fade-out / fade-in. ~0.3 is comfortable; the freeze itself is hidden regardless of this value.")]
+        public float fadeDuration = 0.3f;
+
         string HttpBase    => $"http://{serverHost}:{serverPort}";
         string WsDeviceUrl => $"ws://{serverHost}:{serverPort}/device";
 
@@ -142,9 +148,18 @@ namespace QoeDevice {
         void Start() {
             QoeLog.Event("init", $"server={HttpBase} kind={deviceKind} taskScene={(string.IsNullOrEmpty(taskSceneName) ? "NOT SET" : taskSceneName)}");
             ValidateTaskSceneInBuildSettings();
+            EnsureFader();
             BuildUi();
             SetHud("Ready — press Connect");
             UpdateButtonStates();
+        }
+
+        // The fade quad parents itself to the active camera at fade time, so the
+        // fader can live on this (persistent shell) GameObject regardless of
+        // which rig owns the view. Auto-created so no inspector wiring is needed.
+        void EnsureFader() {
+            if (fader == null) fader = GetComponent<ScreenFader>();
+            if (fader == null) fader = gameObject.AddComponent<ScreenFader>();
         }
 
         // ── UI ───────────────────────────────────────────────────────────
@@ -659,12 +674,20 @@ namespace QoeDevice {
             SetHud($"[debug] loading '{sceneName}'…");
             SetDebugSceneButtonLabel(sceneName, $"Loading {sceneName}…");
 
+            // Fade to black BEFORE the load. The activation hitch (op.isDone)
+            // freezes the main thread; behind black the compositor reprojects
+            // black, which is comfortable. FadeOut returns only once black has
+            // actually been presented, so the hidden window truly covers the
+            // hitch. The load-time measurement brackets only the load itself.
+            if (fader != null) yield return fader.FadeOut(fadeDuration);
+
             float t0 = Time.realtimeSinceStartup;
             var op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Additive);
             if (op == null) {
                 QoeLog.Err("debugscene", $"LoadSceneAsync returned null for '{sceneName}' — not in Build Settings?");
                 SetHud($"[debug] load failed for '{sceneName}'");
                 SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
+                if (fader != null) yield return fader.FadeIn(fadeDuration);
                 yield break;
             }
             while (!op.isDone) yield return null;
@@ -674,17 +697,30 @@ namespace QoeDevice {
             QoeLog.Event("debugscene", $"loaded '{sceneName}' in {seconds:F2}s");
             SetHud($"[debug] '{sceneName}' loaded in {seconds:F2}s");
             SetDebugSceneButtonLabel(sceneName, $"Unload {sceneName}");
+
+            // Hold black a few extra frames for the residual hitches as meshes,
+            // textures and shaders first hit the GPU, then reveal the world.
+            yield return WaitFramesThenFadeIn(5);
         }
 
         IEnumerator DebugSceneUnload(string sceneName) {
             QoeLog.Event("debugscene", $"unloading '{sceneName}'…");
             SetHud($"[debug] unloading '{sceneName}'…");
+            if (fader != null) yield return fader.FadeOut(fadeDuration);
             var op = SceneManager.UnloadSceneAsync(sceneName);
             if (op != null) while (!op.isDone) yield return null;
             loadedDebugScenes.Remove(sceneName);
             QoeLog.Event("debugscene", $"unloaded '{sceneName}'");
             SetHud($"[debug] '{sceneName}' unloaded");
             SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
+            yield return WaitFramesThenFadeIn(2);
+        }
+
+        // Hold the current (black) frame for n frames so post-activation GPU
+        // upload hitches land behind black, then fade the world back in.
+        IEnumerator WaitFramesThenFadeIn(int frames) {
+            for (int i = 0; i < frames; i++) yield return null;
+            if (fader != null) yield return fader.FadeIn(fadeDuration);
         }
 
         void SetDebugSceneButtonLabel(string sceneName, string label) {

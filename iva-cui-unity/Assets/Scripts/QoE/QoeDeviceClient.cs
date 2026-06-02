@@ -88,9 +88,11 @@ namespace QoeDevice {
         [Header("Log panel")]
         public int logMaxLines = 12;
 
-        [Header("Debug scene load buttons")]
-        [Tooltip("One debug button is built per entry. Each additively loads/unloads its scene. Must be in Build Settings.")]
-        public string[] debugScenes = { "City_Scene", "Hotel_Scene", "Museum_Scene" };
+        [Header("Debug task start buttons")]
+        [Tooltip("Player root to teleport — whichever of 'XR Interaction Setup' or 'WASD Player' is active in the scene.")]
+        public Transform playerTransform;
+        [Tooltip("Spawn points for Training, Task 1, Task 2, Task 3 (index 0–3). Assign in the inspector.")]
+        public Transform[] taskSpawnPoints = new Transform[4];
 
         [Header("Screen fade (VR comfort)")]
         [Tooltip("Fades the view to black before a scene load so the headset compositor reprojects black during the main-thread activation freeze, instead of a frozen, head-tracked world (the nausea trigger). Auto-created on this GameObject if left null.")]
@@ -125,10 +127,7 @@ namespace QoeDevice {
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
         PressDownButton debugTaskButton;
-        // One button per debugScenes entry. Each independently loads/unloads its
-        // scene; the set of currently loaded debug scenes is tracked below.
-        PressDownButton[] debugSceneButtons;
-        readonly HashSet<string> loadedDebugScenes = new();
+        static readonly string[] kTaskLabels = { "Training", "Task 1", "Task 2", "Task 3" };
         TMP_Text hudText;
         TMP_Text logText;
         GameObject hudGo;
@@ -348,19 +347,11 @@ namespace QoeDevice {
             le.flexibleWidth = 1f;
             le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
 
-            // One load/unload button per debug scene, on their own row so they
-            // don't crowd the Debug task button.
-            BuildDebugSceneRow(parent, btnH);
+            BuildTaskStartRow(parent, btnH);
         }
 
-        // A row of buttons (one per debugScenes entry) that additively load and
-        // unload that scene independently of the session flow. Lets us see how
-        // long a cold additive load of each environment takes on the target
-        // device, and tap several to observe cumulative cost.
-        void BuildDebugSceneRow(RectTransform parent, int btnH) {
-            if (debugScenes == null || debugScenes.Length == 0) return;
-
-            var rowGo = new GameObject("DebugSceneRow", typeof(RectTransform));
+        void BuildTaskStartRow(RectTransform parent, int btnH) {
+            var rowGo = new GameObject("TaskStartRow", typeof(RectTransform));
             rowGo.transform.SetParent(parent, false);
             var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
             hg.spacing = ui.Sx(8);
@@ -371,15 +362,13 @@ namespace QoeDevice {
             rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
 
             var rowRT = (RectTransform)rowGo.transform;
-            debugSceneButtons = new PressDownButton[debugScenes.Length];
-            for (int i = 0; i < debugScenes.Length; i++) {
-                string sceneName = debugScenes[i];
-                var btn = ui.BuildButton(rowRT, $"Load {sceneName}", new Color(0.3f, 0.4f, 0.55f), 16,
-                    () => ToggleDebugScene(sceneName));
+            for (int i = 0; i < kTaskLabels.Length; i++) {
+                int idx = i;
+                var btn = ui.BuildButton(rowRT, kTaskLabels[i], new Color(0.3f, 0.4f, 0.55f), 16,
+                    () => TeleportToTask(idx));
                 var le = btn.GetComponent<LayoutElement>();
                 le.flexibleWidth = 1f;
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
-                debugSceneButtons[i] = btn;
             }
         }
 
@@ -651,95 +640,22 @@ namespace QoeDevice {
             if (lbl != null) lbl.text = debugTaskActive ? "Stop task" : "Debug task";
         }
 
-        // ── Debug scene load buttons ──────────────────────────────────────
-        // Independent of the session flow: additively load/unload a single
-        // environment to see how long a cold load takes on the device. Several
-        // can be loaded at once to eyeball cumulative footprint. Unlike the
-        // task-scene path, we don't touch shellRig here — these scenes are
-        // loaded only for inspection, so the shell rig stays active.
-        void ToggleDebugScene(string sceneName) {
-            if (string.IsNullOrEmpty(sceneName)) return;
-            if (loadedDebugScenes.Contains(sceneName)) StartCoroutine(DebugSceneUnload(sceneName));
-            else                                       StartCoroutine(DebugSceneLoad(sceneName));
-        }
-
-        IEnumerator DebugSceneLoad(string sceneName) {
-            if (!IsSceneInBuildSettings(sceneName)) {
-                QoeLog.Err("debugscene", $"'{sceneName}' is NOT in Build Settings — add it (File ▸ Build Settings) or the load fails silently");
-                SetHud($"[debug] '{sceneName}' not in Build Settings");
-                yield break;
-            }
-
-            QoeLog.Event("debugscene", $"loading '{sceneName}'…");
-            SetHud($"[debug] loading '{sceneName}'…");
-            SetDebugSceneButtonLabel(sceneName, $"Loading {sceneName}…");
-
-            // Fade to black BEFORE the load. The activation hitch (op.isDone)
-            // freezes the main thread; behind black the compositor reprojects
-            // black, which is comfortable. FadeOut returns only once black has
-            // actually been presented, so the hidden window truly covers the
-            // hitch. The load-time measurement brackets only the load itself.
-            if (fader != null) yield return fader.FadeOut(fadeDuration);
-
-            float t0 = Time.realtimeSinceStartup;
-            var op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Additive);
-            if (op == null) {
-                QoeLog.Err("debugscene", $"LoadSceneAsync returned null for '{sceneName}' — not in Build Settings?");
-                SetHud($"[debug] load failed for '{sceneName}'");
-                SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
-                if (fader != null) yield return fader.FadeIn(fadeDuration);
-                yield break;
-            }
-            while (!op.isDone) yield return null;
-            float seconds = Time.realtimeSinceStartup - t0;
-
-            loadedDebugScenes.Add(sceneName);
-            QoeLog.Event("debugscene", $"loaded '{sceneName}' in {seconds:F2}s");
-            SetHud($"[debug] '{sceneName}' loaded in {seconds:F2}s");
-            SetDebugSceneButtonLabel(sceneName, $"Unload {sceneName}");
-
-            // Hold black a few extra frames for the residual hitches as meshes,
-            // textures and shaders first hit the GPU, then reveal the world.
-            yield return WaitFramesThenFadeIn(5);
-        }
-
-        IEnumerator DebugSceneUnload(string sceneName) {
-            QoeLog.Event("debugscene", $"unloading '{sceneName}'…");
-            SetHud($"[debug] unloading '{sceneName}'…");
-            if (fader != null) yield return fader.FadeOut(fadeDuration);
-            var op = SceneManager.UnloadSceneAsync(sceneName);
-            if (op != null) while (!op.isDone) yield return null;
-            loadedDebugScenes.Remove(sceneName);
-            QoeLog.Event("debugscene", $"unloaded '{sceneName}'");
-            SetHud($"[debug] '{sceneName}' unloaded");
-            SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
-            yield return WaitFramesThenFadeIn(2);
-        }
-
-        // Hold the current (black) frame for n frames so post-activation GPU
-        // upload hitches land behind black, then fade the world back in.
-        IEnumerator WaitFramesThenFadeIn(int frames) {
-            for (int i = 0; i < frames; i++) yield return null;
-            if (fader != null) yield return fader.FadeIn(fadeDuration);
-        }
-
-        void SetDebugSceneButtonLabel(string sceneName, string label) {
-            if (debugSceneButtons == null || debugScenes == null) return;
-            for (int i = 0; i < debugScenes.Length && i < debugSceneButtons.Length; i++) {
-                if (debugScenes[i] != sceneName || debugSceneButtons[i] == null) continue;
-                var lbl = debugSceneButtons[i].GetComponentInChildren<TMP_Text>();
-                if (lbl != null) lbl.text = label;
+        // ── Debug task start buttons ──────────────────────────────────────
+        void TeleportToTask(int taskIndex) {
+            if (playerTransform == null) {
+                QoeLog.Warn("task", "playerTransform not assigned — cannot teleport");
+                SetHud("[debug] playerTransform not set");
                 return;
             }
-        }
-
-        static bool IsSceneInBuildSettings(string sceneName) {
-            int count = SceneManager.sceneCountInBuildSettings;
-            for (int i = 0; i < count; i++) {
-                var path = SceneUtility.GetScenePathByBuildIndex(i);
-                if (System.IO.Path.GetFileNameWithoutExtension(path) == sceneName) return true;
+            if (taskIndex < 0 || taskIndex >= taskSpawnPoints.Length || taskSpawnPoints[taskIndex] == null) {
+                QoeLog.Warn("task", $"spawnPoint for {kTaskLabels[taskIndex]} not assigned");
+                SetHud($"[debug] spawn point for {kTaskLabels[taskIndex]} not set");
+                return;
             }
-            return false;
+            var spawn = taskSpawnPoints[taskIndex];
+            playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
+            QoeLog.Event("task", $"[debug] teleported to {kTaskLabels[taskIndex]}");
+            SetHud($"[debug] Teleported to {kTaskLabels[taskIndex]}");
         }
 
         public void AbandonRun() {

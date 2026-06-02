@@ -1,3 +1,9 @@
+# QoE Lab Modified IVA-CUI
+
+TODOs
+- [ ] Replace the mic indicator icon from Rec to mic
+
+
 # IVA-CUI
 
 This repository contains the Python and Unity code for a [paper](https://doi.org/10.1145/3719160.3736636) titled

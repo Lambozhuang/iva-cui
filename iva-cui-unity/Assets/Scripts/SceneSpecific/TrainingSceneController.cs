@@ -153,19 +153,51 @@ public class TrainingSceneController : MonoBehaviour
         Invoke(nameof(InitializeTaskUI), .1f);
     }
 
-    private void Update()
+    [Header("Mic proximity gate")]
+    [Tooltip("The Training agent's head. The mic only activates for this agent when the player's camera is within range. Assign in the Inspector.")]
+    [SerializeField] private Transform trainingAgentHead;
+
+    [Tooltip("Max distance (m) from the camera to the Training agent's head for the mic to activate here.")]
+    [SerializeField] private float micActivationRange = 2.5f;
+
+    // True while the player camera is within micActivationRange of the Training
+    // agent. The zone-based StudyControls pipeline reads this so it stays silent
+    // here instead of playing its "mic unavailable" sound — both pipelines share
+    // one button, and the Training agent owns it at this spot.
+    public static bool PlayerNearTrainingAgent { get; private set; }
+
+    private bool warnedNoHead = false;
+
+    private bool ComputePlayerNearTrainingAgent()
     {
-        if (Input.GetKeyDown(KeyCode.M))
+        if (trainingAgentHead == null)
         {
-            HandleMicButtonInput();
-            return;
+            if (!warnedNoHead)
+            {
+                Debug.LogWarning("TrainingSceneController: 'trainingAgentHead' not assigned — Training mic is disabled. Assign the Training agent's head in the Inspector.");
+                warnedNoHead = true;
+            }
+            return false;
         }
 
-        if (controllerMicButton != null && controllerMicButton.action.WasPressedThisFrame())
-        {
-            HandleMicButtonInput();
-            return;
-        }
+        Camera cam = Camera.main;
+        if (cam == null) return false;
+        return Vector3.Distance(cam.transform.position, trainingAgentHead.position) <= micActivationRange;
+    }
+
+    private void Update()
+    {
+        PlayerNearTrainingAgent = ComputePlayerNearTrainingAgent();
+
+        bool micPressed = Input.GetKeyDown(KeyCode.M)
+            || (controllerMicButton != null && controllerMicButton.action.WasPressedThisFrame());
+        if (!micPressed) return;
+
+        // Only this agent handles the mic when the player is near it; otherwise
+        // let the zone-based StudyControls pipeline (Hotel/City/Museum) take it.
+        if (!PlayerNearTrainingAgent) return;
+
+        HandleMicButtonInput();
     }
 
     private bool isThinking = false;

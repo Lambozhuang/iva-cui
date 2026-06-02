@@ -231,6 +231,14 @@ public class StudyControls : MonoBehaviour
 
     private void Update()
     {
+        // The Training agent owns the mic when the player stands near it (it has
+        // no ActivationZone and runs its own pipeline). Stay out of the way so we
+        // don't double-fire or play the "mic unavailable" sound over it.
+        if (TrainingSceneController.PlayerNearTrainingAgent)
+        {
+            return;
+        }
+
         if (Input.GetKeyDown(KeyCode.M))
         {
             HandleMicButtonInput();

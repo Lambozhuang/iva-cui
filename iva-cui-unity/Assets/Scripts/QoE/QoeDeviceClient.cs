@@ -88,6 +88,10 @@ namespace QoeDevice {
         [Header("Log panel")]
         public int logMaxLines = 12;
 
+        [Header("Debug scene load buttons")]
+        [Tooltip("One debug button is built per entry. Each additively loads/unloads its scene. Must be in Build Settings.")]
+        public string[] debugScenes = { "City_Scene", "Hotel_Scene", "Museum_Scene" };
+
         string HttpBase    => $"http://{serverHost}:{serverPort}";
         string WsDeviceUrl => $"ws://{serverHost}:{serverPort}/device";
 
@@ -115,6 +119,10 @@ namespace QoeDevice {
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
         PressDownButton debugTaskButton;
+        // One button per debugScenes entry. Each independently loads/unloads its
+        // scene; the set of currently loaded debug scenes is tracked below.
+        PressDownButton[] debugSceneButtons;
+        readonly HashSet<string> loadedDebugScenes = new();
         TMP_Text hudText;
         TMP_Text logText;
         GameObject hudGo;
@@ -324,6 +332,40 @@ namespace QoeDevice {
             var le = debugTaskButton.GetComponent<LayoutElement>();
             le.flexibleWidth = 1f;
             le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
+
+            // One load/unload button per debug scene, on their own row so they
+            // don't crowd the Debug task button.
+            BuildDebugSceneRow(parent, btnH);
+        }
+
+        // A row of buttons (one per debugScenes entry) that additively load and
+        // unload that scene independently of the session flow. Lets us see how
+        // long a cold additive load of each environment takes on the target
+        // device, and tap several to observe cumulative cost.
+        void BuildDebugSceneRow(RectTransform parent, int btnH) {
+            if (debugScenes == null || debugScenes.Length == 0) return;
+
+            var rowGo = new GameObject("DebugSceneRow", typeof(RectTransform));
+            rowGo.transform.SetParent(parent, false);
+            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
+            hg.spacing = ui.Sx(8);
+            hg.childForceExpandWidth = true; hg.childForceExpandHeight = false;
+            hg.childControlWidth = true; hg.childControlHeight = true;
+            hg.childAlignment = TextAnchor.MiddleCenter;
+            var rowLe = rowGo.AddComponent<LayoutElement>();
+            rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
+
+            var rowRT = (RectTransform)rowGo.transform;
+            debugSceneButtons = new PressDownButton[debugScenes.Length];
+            for (int i = 0; i < debugScenes.Length; i++) {
+                string sceneName = debugScenes[i];
+                var btn = ui.BuildButton(rowRT, $"Load {sceneName}", new Color(0.3f, 0.4f, 0.55f), 16,
+                    () => ToggleDebugScene(sceneName));
+                var le = btn.GetComponent<LayoutElement>();
+                le.flexibleWidth = 1f;
+                le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
+                debugSceneButtons[i] = btn;
+            }
         }
 
         void BuildLogPanel(RectTransform parent) {
@@ -592,6 +634,76 @@ namespace QoeDevice {
             if (debugTaskButton == null) return;
             var lbl = debugTaskButton.GetComponentInChildren<TMP_Text>();
             if (lbl != null) lbl.text = debugTaskActive ? "Stop task" : "Debug task";
+        }
+
+        // ── Debug scene load buttons ──────────────────────────────────────
+        // Independent of the session flow: additively load/unload a single
+        // environment to see how long a cold load takes on the device. Several
+        // can be loaded at once to eyeball cumulative footprint. Unlike the
+        // task-scene path, we don't touch shellRig here — these scenes are
+        // loaded only for inspection, so the shell rig stays active.
+        void ToggleDebugScene(string sceneName) {
+            if (string.IsNullOrEmpty(sceneName)) return;
+            if (loadedDebugScenes.Contains(sceneName)) StartCoroutine(DebugSceneUnload(sceneName));
+            else                                       StartCoroutine(DebugSceneLoad(sceneName));
+        }
+
+        IEnumerator DebugSceneLoad(string sceneName) {
+            if (!IsSceneInBuildSettings(sceneName)) {
+                QoeLog.Err("debugscene", $"'{sceneName}' is NOT in Build Settings — add it (File ▸ Build Settings) or the load fails silently");
+                SetHud($"[debug] '{sceneName}' not in Build Settings");
+                yield break;
+            }
+
+            QoeLog.Event("debugscene", $"loading '{sceneName}'…");
+            SetHud($"[debug] loading '{sceneName}'…");
+            SetDebugSceneButtonLabel(sceneName, $"Loading {sceneName}…");
+
+            float t0 = Time.realtimeSinceStartup;
+            var op = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Additive);
+            if (op == null) {
+                QoeLog.Err("debugscene", $"LoadSceneAsync returned null for '{sceneName}' — not in Build Settings?");
+                SetHud($"[debug] load failed for '{sceneName}'");
+                SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
+                yield break;
+            }
+            while (!op.isDone) yield return null;
+            float seconds = Time.realtimeSinceStartup - t0;
+
+            loadedDebugScenes.Add(sceneName);
+            QoeLog.Event("debugscene", $"loaded '{sceneName}' in {seconds:F2}s");
+            SetHud($"[debug] '{sceneName}' loaded in {seconds:F2}s");
+            SetDebugSceneButtonLabel(sceneName, $"Unload {sceneName}");
+        }
+
+        IEnumerator DebugSceneUnload(string sceneName) {
+            QoeLog.Event("debugscene", $"unloading '{sceneName}'…");
+            SetHud($"[debug] unloading '{sceneName}'…");
+            var op = SceneManager.UnloadSceneAsync(sceneName);
+            if (op != null) while (!op.isDone) yield return null;
+            loadedDebugScenes.Remove(sceneName);
+            QoeLog.Event("debugscene", $"unloaded '{sceneName}'");
+            SetHud($"[debug] '{sceneName}' unloaded");
+            SetDebugSceneButtonLabel(sceneName, $"Load {sceneName}");
+        }
+
+        void SetDebugSceneButtonLabel(string sceneName, string label) {
+            if (debugSceneButtons == null || debugScenes == null) return;
+            for (int i = 0; i < debugScenes.Length && i < debugSceneButtons.Length; i++) {
+                if (debugScenes[i] != sceneName || debugSceneButtons[i] == null) continue;
+                var lbl = debugSceneButtons[i].GetComponentInChildren<TMP_Text>();
+                if (lbl != null) lbl.text = label;
+                return;
+            }
+        }
+
+        static bool IsSceneInBuildSettings(string sceneName) {
+            int count = SceneManager.sceneCountInBuildSettings;
+            for (int i = 0; i < count; i++) {
+                var path = SceneUtility.GetScenePathByBuildIndex(i);
+                if (System.IO.Path.GetFileNameWithoutExtension(path) == sceneName) return true;
+            }
+            return false;
         }
 
         public void AbandonRun() {

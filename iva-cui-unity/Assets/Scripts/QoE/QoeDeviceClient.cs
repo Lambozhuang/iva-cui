@@ -72,6 +72,8 @@ namespace QoeDevice {
         public Transform playerTransform;
         [Tooltip("Spawn points indexed by task: [0]=Training (task_number null), [1]=Task 1, [2]=Task 2, [3]=Task 3. Assign in the inspector. start_task's task_number maps directly to this index (null→0).")]
         public Transform[] taskSpawnPoints = new Transform[4];
+        [Tooltip("Where the player is sent when a run ends (timer expires, End Run, or abandon) to remove the stimuli — i.e. move them away from the agent during the rating/break phase. If unassigned, defaults to world origin (0,0,0).")]
+        public Transform neutralPoint;
 
         [Header("Screen fade (VR comfort)")]
         [Tooltip("Fades the view to black before a teleport so the headset compositor reprojects black during the swap. Auto-created on this GameObject if left null.")]
@@ -547,6 +549,7 @@ namespace QoeDevice {
                 yield return null;
             }
             QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
+            TeleportToNeutral();
             yield return PostEndCondition(activeSid);
             runCo = null;
         }
@@ -555,6 +558,7 @@ namespace QoeDevice {
             if (phase != DevicePhase.RunningTask) return;
             QoeLog.Event("task", $"end run early: run {activeRunId} '{activeLabel}'");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            TeleportToNeutral();
             SetHud("Ending run early — calling /end-condition…");
             StartCoroutine(PostEndCondition(activeSid));
         }
@@ -588,10 +592,28 @@ namespace QoeDevice {
             SetHud($"Teleported to {kTaskLabels[taskIndex]}");
         }
 
+        // Move the player away from the agent when a run ends, so the stimuli is
+        // removed during the rating/break phase. The proximity system then sees
+        // no agent in range and clears the active zone. Defaults to world origin
+        // when neutralPoint is unassigned.
+        void TeleportToNeutral() {
+            if (playerTransform == null) {
+                QoeLog.Warn("task", "playerTransform not assigned — cannot teleport to neutral");
+                return;
+            }
+            if (neutralPoint != null) {
+                playerTransform.SetPositionAndRotation(neutralPoint.position, neutralPoint.rotation);
+            } else {
+                playerTransform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            }
+            QoeLog.Event("task", "teleported to neutral point (stimuli removed)");
+        }
+
         public void AbandonRun() {
             if (phase != DevicePhase.RunningTask && phase != DevicePhase.TaskReceived && phase != DevicePhase.LoadingTask) return;
             QoeLog.Warn("task", $"abandon run {activeRunId} '{activeLabel}' phase={phase} — /end-condition NOT sent");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            TeleportToNeutral();
             SetHud("Run abandoned locally");
             TransitionPhase(DevicePhase.Idle);
         }

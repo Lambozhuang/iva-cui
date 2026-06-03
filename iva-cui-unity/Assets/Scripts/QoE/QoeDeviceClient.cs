@@ -105,7 +105,7 @@ namespace QoeDevice {
         // Code-built UI. References saved here for runtime updates and for
         // per-phase / per-mode visibility toggling (see UpdateUiVisibility).
         readonly QoeUI ui = new();
-        PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
+        PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton;
         // Training + Task 1–9 (the eventual 3 scenes × 3 agents). Only the first
         // few have spawn points / backend scenes wired today; the rest render as
         // debug buttons but TeleportToTask no-ops on them until they're assigned.
@@ -129,6 +129,7 @@ namespace QoeDevice {
         static readonly Color kGreen = new(0.2f,  0.7f,  0.35f);
         static readonly Color kRed   = new(0.8f,  0.35f, 0.25f);
         static readonly Color kTaskBtn = new(0.3f, 0.4f, 0.55f);
+        static readonly Color kPreview = new(0.45f, 0.45f, 0.5f);
         static readonly Color kMicRecording = new(0.9f, 0.2f, 0.2f);
         static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
 
@@ -255,6 +256,7 @@ namespace QoeDevice {
             SetActive(disconnectButton, debugMode);
             SetActive(sendReadyButton,  debugMode || (taskReceived && !ratingVisible));
             SetActive(endRunEarlyButton, debugMode || running);
+            SetActive(previewRatingButton, debugMode);
             if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running);
         }
 
@@ -360,27 +362,38 @@ namespace QoeDevice {
             QoeUI.StretchToParent((RectTransform)hudText.transform);
         }
 
-        // Top-right: the four control buttons stacked vertically. In debug all
-        // four are present (enabled/dimmed per phase). In normal mode only the
-        // single valid action is shown (UpdateUiVisibility), so the stack reads
-        // as one button at the top-right.
+        // Top-right: the four control buttons stacked vertically, with a
+        // "Preview rating" button below them (debug only). In debug all four
+        // controls are present (enabled/dimmed per phase). In normal mode only
+        // the single valid action is shown (UpdateUiVisibility), so the stack
+        // reads as one button at the top-right.
         void BuildControlsCluster(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.74f, 0.5f), new Vector2(1f, 1f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, 0.42f), new Vector2(1f, 1f), ui.Sx(6));
             controlsGo = region.gameObject;
             var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = ui.Sx(6);
+            vlg.spacing = ui.Sx(5);
             vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
             vlg.childControlWidth = true; vlg.childControlHeight = true;
             vlg.childAlignment = TextAnchor.UpperCenter;
 
-            connectButton     = ui.BuildButton(region, "Connect",    kBlue,  20, ConnectManual);
-            disconnectButton  = ui.BuildButton(region, "Disconnect", kGray,  20, DisconnectManual);
-            sendReadyButton   = ui.BuildButton(region, "Ready",      kGreen, 20, SendReadyManual);
-            endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   20, EndRunEarly);
-            int btnH = ui.Sx(40);
+            connectButton     = ui.BuildButton(region, "Connect",    kBlue,  16, ConnectManual);
+            disconnectButton  = ui.BuildButton(region, "Disconnect", kGray,  16, DisconnectManual);
+            sendReadyButton   = ui.BuildButton(region, "Ready",      kGreen, 16, SendReadyManual);
+            endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   16, EndRunEarly);
+            int btnH = ui.Sx(30);
             foreach (var b in new[] { connectButton, disconnectButton, sendReadyButton, endRunEarlyButton }) {
                 var le = b.GetComponent<LayoutElement>();
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
+            }
+
+            // Preview rating — debug-only helper that loads the rating debug
+            // preview into the center region (moved here from the rating
+            // section's status bar). Sits under the four controls.
+            if (debugMode && ratingClient != null) {
+                previewRatingButton = ui.BuildButton(region, "Preview rating", kPreview, 14, ratingClient.LoadDebugPreview);
+                var le = previewRatingButton.GetComponent<LayoutElement>();
+                int ph = ui.Sx(26);
+                le.minHeight = ph; le.preferredHeight = ph; le.flexibleHeight = 0;
             }
         }
 
@@ -407,7 +420,8 @@ namespace QoeDevice {
         // backend scene — no WS / ready / end-condition. The grid auto-sizes its
         // cells to fit the panel width across kTaskLabels.Length entries.
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
-            var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(0.7f, 0.16f), ui.Sx(6));
+            const float gridFracW = 0.72f;
+            var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(gridFracW, 0.16f), ui.Sx(6));
             taskGridGo = region.gameObject;
             var grid = region.gameObject.AddComponent<GridLayoutGroup>();
             grid.spacing = new Vector2(ui.Sx(4), ui.Sx(4));
@@ -417,7 +431,7 @@ namespace QoeDevice {
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
             int cols = 5; // 10 task buttons → 5×2 grid
             grid.constraintCount = cols;
-            float regionW = Mathf.Max(1f, rootW * 0.7f - 2f * ui.Sx(6));
+            float regionW = Mathf.Max(1f, rootW * gridFracW - 2f * ui.Sx(6));
             float cellW = (regionW - (cols - 1) * ui.Sx(4)) / cols;
             float cellH = Mathf.Max(ui.Sx(22), rootH * 0.16f * 0.42f);
             grid.cellSize = new Vector2(cellW, cellH);
@@ -428,15 +442,18 @@ namespace QoeDevice {
             }
         }
 
-        // Bottom-right: log window. Debug only.
+        // Right column, below the controls cluster: the log window. Debug only.
+        // It sits in the right-hand strip the center region leaves clear, so it
+        // can run tall (up to the controls) without crowding the rating UI.
         void BuildLogPanel(RectTransform parent) {
-            var panel = ui.BuildAnchoredRegion(parent, "Log", new Vector2(0.7f, 0f), new Vector2(1f, 0.16f), ui.Sx(6));
+            var panel = ui.BuildAnchoredRegion(parent, "Log", new Vector2(0.74f, 0f), new Vector2(1f, 0.4f), ui.Sx(6));
             logPanelGo = panel.gameObject;
             panel.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
 
             logText = ui.BuildLabel(panel, "", 11, FontStyles.Normal, new Color(0.9f, 0.9f, 0.9f));
             logText.enableWordWrapping = false;
             logText.overflowMode = TextOverflowModes.Truncate;
+            logText.alignment = TextAlignmentOptions.BottomLeft;
             QoeUI.StretchToParent((RectTransform)logText.transform);
             var rt = (RectTransform)logText.transform;
             rt.offsetMin = new Vector2(ui.Sx(6), ui.Sx(6));

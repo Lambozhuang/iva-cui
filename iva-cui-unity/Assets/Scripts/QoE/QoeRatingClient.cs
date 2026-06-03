@@ -85,9 +85,14 @@ namespace QoeDevice {
         // client) wraps this section inside its own VerticalLayoutGroup, so
         // the section's LayoutElement.flexibleHeight=1 makes the form area
         // soak up whatever space is left after HUD/controls/log.
-        // <paramref name="showDebugButton"/> mirrors QoeDeviceClient.debugMode
-        // — off in subject-facing builds, on while iterating.
-        public void BuildUi(RectTransform parent, bool showDebugButton = true) {
+        // <paramref name="debugVisible"/> mirrors QoeDeviceClient.debugMode —
+        // off in subject-facing builds, on while iterating. When on, the section
+        // (status bar + form area) stays visible even with no form up; when off
+        // it appears only while a form is being answered. The debug "Preview
+        // rating" trigger now lives in QoeDeviceClient's controls cluster and
+        // calls LoadDebugPreview directly, so the section no longer builds its
+        // own button.
+        public void BuildUi(RectTransform parent, bool debugVisible = true) {
             if (parent == null) {
                 QoeLog.Err("rating", "BuildUi called with null parent — cannot build rating UI");
                 return;
@@ -101,7 +106,7 @@ namespace QoeDevice {
                 section = null; formContainer = null; statusText = null; statusBarGo = null;
             }
             IsFormVisible = false;
-            sectionDebugMode = showDebugButton;
+            sectionDebugMode = debugVisible;
             Canvas.ForceUpdateCanvases();
             float w = parent.rect.width;
             ui.scale = w > 0 ? Mathf.Clamp(w / kReferenceWidth, 0.05f, 4f) : 1f;
@@ -117,7 +122,7 @@ namespace QoeDevice {
             var sectionLe = sectionGo.AddComponent<LayoutElement>();
             sectionLe.flexibleHeight = 1f; sectionLe.minHeight = ui.Sx(200);
 
-            BuildStatusBar(section, showDebugButton);
+            BuildStatusBar(section);
             BuildFormArea(section);
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(section);
@@ -135,7 +140,7 @@ namespace QoeDevice {
             if (statusBarGo != null) statusBarGo.SetActive(sectionDebugMode);
         }
 
-        void BuildStatusBar(RectTransform parent, bool showDebugButton) {
+        void BuildStatusBar(RectTransform parent) {
             var rowGo = new GameObject("StatusBar", typeof(RectTransform));
             statusBarGo = rowGo;
             rowGo.transform.SetParent(parent, false);
@@ -144,8 +149,7 @@ namespace QoeDevice {
             hg.childForceExpandWidth = false; hg.childForceExpandHeight = false;
             hg.childControlWidth = true; hg.childControlHeight = true;
             hg.childAlignment = TextAnchor.MiddleLeft;
-            // Single-line status text + debug button. Use the button's
-            // preferred height so the row stays as compact as the button.
+            // Single-line status text. Compact fixed-height row.
             int rowH = ui.Sx(24);
             var rowLe = rowGo.AddComponent<LayoutElement>();
             rowLe.minHeight = rowH; rowLe.preferredHeight = rowH; rowLe.flexibleHeight = 0;
@@ -156,13 +160,6 @@ namespace QoeDevice {
             var statusLe = statusText.gameObject.AddComponent<LayoutElement>();
             statusLe.flexibleWidth = 1f; statusLe.minWidth = 0; statusLe.preferredWidth = 0;
             statusLe.minHeight = rowH; statusLe.preferredHeight = rowH;
-
-            if (showDebugButton) {
-                var debugBtn = ui.BuildButton((RectTransform)rowGo.transform, "Debug preview", new Color(0.45f, 0.45f, 0.5f), 12, LoadDebugPreview);
-                var debugLe = debugBtn.GetComponent<LayoutElement>();
-                debugLe.preferredWidth = ui.Sx(110); debugLe.minWidth = ui.Sx(110); debugLe.flexibleWidth = 0;
-                debugLe.minHeight = rowH; debugLe.preferredHeight = rowH; debugLe.flexibleHeight = 0;
-            }
         }
 
         // The form area takes whatever vertical space rootContainer has left.

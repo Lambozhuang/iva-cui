@@ -22,9 +22,52 @@ namespace LLMAgents
         public static ActivationZone currentZone;
         public static ActivationZone lastZone;
 
+        [Tooltip("Max distance (m) from the player camera to an agent's head for that agent's zone to activate. Replaces the old trigger-collider zones.")]
+        public float activationRange = 3f;
+
         private void Awake()
         {
             instance = this;
+        }
+
+        // Proximity-based zone activation. The player teleports in front of an
+        // agent (no walking), so we poll distance each frame and activate the
+        // nearest agent within activationRange — the old trigger colliders never
+        // fired reliably on a teleport. Sets/clears AgentSelectionController.currentZone
+        // exactly like the old OnTriggerEnter/Exit did.
+        private void Update()
+        {
+            if (zones == null || zones.Count == 0)
+                return;
+
+            Camera cam = Camera.main;
+            if (cam == null)
+                return;
+
+            Vector3 camPos = cam.transform.position;
+
+            ActivationZone nearest = null;
+            float nearestDist = activationRange;
+            foreach (ActivationZone zone in zones)
+            {
+                if (zone == null)
+                    continue;
+                float dist = Vector3.Distance(camPos, zone.GetProximityPoint());
+                if (dist <= nearestDist)
+                {
+                    nearestDist = dist;
+                    nearest = zone;
+                }
+            }
+
+            // Exactly one zone is "in range" at a time (the nearest). Everyone
+            // else is out. SetPlayerInZone no-ops when state is unchanged.
+            foreach (ActivationZone zone in zones)
+            {
+                if (zone == null)
+                    continue;
+                zone.SetPlayerInZone(zone == nearest);
+            }
         }
 
         public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, ServerInterface.SpeechResponse speechResponse)

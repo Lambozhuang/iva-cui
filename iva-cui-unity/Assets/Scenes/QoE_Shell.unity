@@ -348749,7 +348749,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ffa89c52cd16274419b7d757bc1c2adc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  selectedMicString: Headset Microphone (6- DualSense Wireless Controller)
+  selectedMicString: Microphone (Realtek(R) Audio)
   vrAudioSrc: {fileID: 0}
   pcAudioSrc: {fileID: 1666972495}
   micUnavailableSound: {fileID: 8300000, guid: 7f999dfb3c0632d47b1b10b7add0436c, type: 3}
@@ -348791,6 +348791,7 @@ MonoBehaviour:
   - {fileID: 8300000, guid: 1b4f2128c847d7c45ae338c6ef593cf3, type: 3}
   - {fileID: 8300000, guid: 6ac7b23621cf6fc4aafae21ed46da791, type: 3}
   - {fileID: 8300000, guid: 4fedd5e1be0d9764fb61087dec6fabfb, type: 3}
+  activationRange: 3
 --- !u!114 &1666972493
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -348803,8 +348804,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 17361a5b6b867684dafe64ae887adba2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hostIpPort: localhost:8000
-  whisperIpPort: http://localhost:8083/transcribe_audio/
+  serverHost: 192.168.50.147
+  serverPort: 8000
+  whisperPort: 8083
   refreshAtStart: 1
 --- !u!114 &1666972494
 MonoBehaviour:

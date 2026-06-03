@@ -3,6 +3,31 @@
 TODOs
 - [ ] Replace the mic indicator icon from Rec to mic
 
+### QoE adaptation — deferred (do in separate commits)
+
+**Blockers / correctness**
+- [ ] **`QoeDeviceClient` Ready/Debug-task scene-load path contradicts the new single-scene teleport model.** `taskSceneName` is still `Hotel_Scene`, so pressing **Ready** additively loads a second copy of the Hotel scene on top of `QoE_Shell` → duplicate XR rig, camera, AudioListener, and duplicate singletons (`ServerInterface`/`StudyControls`/`AgentSelectionController`) that overwrite the originals. Fix: clear `taskSceneName` and/or disable the additive load path so only teleport is reachable.
+- [ ] **Add `QoE_Shell` to Build Settings (as scene 0).** Currently only `Hotel_Scene` is in the build list, so a Quest build would boot into the wrong scene. (In-editor "play from open scene" is unaffected.)
+- [ ] **Stuck-mic on network failure.** `someoneIsThinking` (Hotel, `StudyControls`) and `isThinking` (Training, `TrainingSceneController`) are only reset on the success path. Any ASR/TTS/download failure leaves the mic permanently blocked with no timeout — high relevance under netem loss/delay. Add a timeout/error reset.
+
+**Routing / multi-scene (needed before all 9 conversations work)**
+- [ ] **Scene-name routing is hardwired to Hotel.** With everything in one `QoE_Shell` scene, `StudyControls.DetermineUserStudySceneName()` can't distinguish City/Hotel/Museum and falls back to the serialized `userStudyScene` (Hotel). Needs `task_number`-driven role/scene selection. `HotelSceneController.HandleLLMDeterminedTask` throws `NotImplementedException` if a non-Hotel transition string arrives.
+- [ ] **Parse `task_number` in `QoeDeviceClient.OnStartTask`** and map it to the correct teleport target + agent role.
+
+**On-device (Quest) logging**
+- [ ] **`SceneProfiling` / `ConversationLogger` write to `streamingAssetsPath`**, which is read-only inside the APK on Android — `File.Write/Append` will throw on-device. Move logs to `Application.persistentDataPath` for Quest builds.
+
+**Polish**
+- [ ] Wire `controllerMicButton` on `TrainingSceneController` (currently NULL → Training mic responds to the M key only, not the Quest trigger).
+- [ ] Disable rig gravity / `CharacterController` around teleport so the player can't drift/fall after a teleport before pressing R.
+
+### QoE adaptation — done
+- Merged Training + Hotel into a single `QoE_Shell` scene with 4 spawn points; task switching = teleport the XR rig (`QoeDeviceClient.TeleportToTask`), no scene loading on the critical path.
+- Consolidated all shared controllers onto one root `Scene Control` GameObject (mic, server, study, logger, agent selection); removed the per-scene duplicates.
+- Training mic gated by proximity to the robot head; `StudyControls` mirror-guards so the two mic pipelines don't double-fire.
+- `ApplyVRSettings` only forces the Quest mic when that device is present (keeps the Inspector-selected mic on PC/Simulator).
+- Replaced `ActivationZone` trigger colliders with proximity-based activation (`AgentSelectionController` polls camera distance) so teleporting in front of an agent activates its zone.
+
 
 # IVA-CUI
 

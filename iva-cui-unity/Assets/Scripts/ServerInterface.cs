@@ -6,8 +6,20 @@ using UnityEngine.Networking;
 
 public class ServerInterface : MonoBehaviour
 {
-    public string hostIpPort = "127.0.0.1:8000";
-    public string whisperIpPort = "http://127.0.0.1:8083/transcribe_audio/";
+    [Header("Server connection")]
+    [Tooltip("Backend host IP or hostname (no port). The middleware and the ASR/Whisper server are assumed to be on this same host.")]
+    public string serverHost = "127.0.0.1";
+
+    [Tooltip("Port of the Python middleware (FastAPI): /speak, /refresh, /check_transition, /static.")]
+    public int serverPort = 8000;
+
+    [Tooltip("Port of the ASR / Whisper server. Uses the same host as above.")]
+    public int whisperPort = 8083;
+
+    // Combined forms used when building request URLs. Whisper shares serverHost,
+    // so you only enter the IP once.
+    private string HostIpPort => $"{serverHost}:{serverPort}";
+    private string WhisperUrl => $"http://{serverHost}:{whisperPort}/transcribe_audio/";
 
     public static ServerInterface instance;
 
@@ -39,7 +51,7 @@ public class ServerInterface : MonoBehaviour
     private IEnumerator SendRefreshRequest(string sceneToRefresh)
     {
         Debug.Log("Sending refresh request for " + sceneToRefresh);
-        string url = $"http://{hostIpPort}/refresh/{sceneToRefresh}/";
+        string url = $"http://{HostIpPort}/refresh/{sceneToRefresh}/";
 
         using (UnityWebRequest webRequest = UnityWebRequest.Get(url))
         {
@@ -51,7 +63,7 @@ public class ServerInterface : MonoBehaviour
 
                 if (webRequest.error.ToLower().Contains("cannot connect"))
                 {
-                    Debug.LogError($"Make sure that Python backend is running on {hostIpPort}");
+                    Debug.LogError($"Make sure that Python backend is running on {HostIpPort}");
                 }
             }
             else
@@ -68,7 +80,7 @@ public class ServerInterface : MonoBehaviour
         WWWForm form = new WWWForm();
         form.AddBinaryData("file", audioBytes, "temp.wav", "audio/wav");
 
-        UnityWebRequest www = UnityWebRequest.Post(whisperIpPort, form);
+        UnityWebRequest www = UnityWebRequest.Post(WhisperUrl, form);
         www.downloadHandler = new DownloadHandlerBuffer();
 
         yield return www.SendWebRequest();
@@ -104,7 +116,7 @@ public class ServerInterface : MonoBehaviour
         string agentTypeString = agentType.ToString().ToLower();
 
         string encodedText = UnityWebRequest.EscapeURL(text);
-        string url = $"http://{hostIpPort}/speak/{agentTypeString}/?q={encodedText}";
+        string url = $"http://{HostIpPort}/speak/{agentTypeString}/?q={encodedText}";
 
         print($"Sending a request to middleware server");
 
@@ -124,7 +136,7 @@ public class ServerInterface : MonoBehaviour
 
                 ConversationLogger.LogAgentMessage(agentType, speechResponse.message);
 
-                string audioFileUrl = $"http://{hostIpPort}/{speechResponse.audio}";
+                string audioFileUrl = $"http://{HostIpPort}/{speechResponse.audio}";
 
                 StartCoroutine(DownloadAndPlayAudio(agentType, audioFileUrl, speechResponse));
             }
@@ -193,7 +205,7 @@ public class ServerInterface : MonoBehaviour
     {
         string agentTypeString = agentType.ToString().ToLower();
 
-        string url = $"http://{hostIpPort}/check_transition/{agentTypeString}/";
+        string url = $"http://{HostIpPort}/check_transition/{agentTypeString}/";
 
         Debug.Log($"Sending transition check for {agentTypeString} via {url}");
 

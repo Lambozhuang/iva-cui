@@ -50,6 +50,13 @@ public class ActivationZone : MonoBehaviour
         return agentType;
     }
 
+    // Point used to measure how close the player is to this agent. Prefers the
+    // avatar's head; falls back to this zone's own position.
+    public Vector3 GetProximityPoint()
+    {
+        return avatarHead != null ? avatarHead.position : transform.position;
+    }
+
     private void Start()
     {
         if (StudyControls.USE_NEW_LOOKAWAY)
@@ -110,26 +117,33 @@ public class ActivationZone : MonoBehaviour
         StartCoroutine(GraduallyLookAwayFromPlayerWhileThinking(val));
     }
 
-    private void OnTriggerEnter(Collider other)
+    // Proximity-driven activation (replaces the old trigger-collider approach).
+    // The player can't walk in this study — they teleport to a spawn point in
+    // front of an agent — so OnTriggerEnter/Exit never fired reliably. Instead,
+    // AgentSelectionController polls distance and calls this. Behaviour mirrors
+    // the old OnTriggerEnter/Exit exactly so the rest of the pipeline is unchanged.
+    public void SetPlayerInZone(bool inZone)
     {
-        if (!other.CompareTag("usercollider"))
-            return;
-        parentZone.GetComponent<Renderer>().material = activated;
-        isActivated = true;
-        AgentSelectionController.currentZone = this;
-        AgentSelectionController.lastZone = AgentSelectionController.currentZone;
-        playerInZone = true;
-    }
+        if (inZone == playerInZone)
+            return; // no change — don't re-trigger enter/exit logic each frame
 
-    private void OnTriggerExit(Collider other)
-    {
-        if (!other.CompareTag("usercollider"))
-            return;
-        parentZone.GetComponent<Renderer>().material = standard;
-        isActivated = false;
-        AgentSelectionController.currentZone = null;
-        playerInZone = false;
-        LookAtPlayer(false);
+        if (inZone)
+        {
+            parentZone.GetComponent<Renderer>().material = activated;
+            isActivated = true;
+            AgentSelectionController.currentZone = this;
+            AgentSelectionController.lastZone = AgentSelectionController.currentZone;
+            playerInZone = true;
+        }
+        else
+        {
+            parentZone.GetComponent<Renderer>().material = standard;
+            isActivated = false;
+            if (AgentSelectionController.currentZone == this)
+                AgentSelectionController.currentZone = null;
+            playerInZone = false;
+            LookAtPlayer(false);
+        }
     }
 
     public void MarkAsInteractedAtLeastOnce()

@@ -9,7 +9,6 @@ using Newtonsoft.Json.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace QoeDevice {
@@ -40,26 +39,6 @@ namespace QoeDevice {
         public string deviceKind = "quest3-unity";
         public string deviceName = "Quest 3 (Unity)";
 
-        [Header("Task scene")]
-        // Name of the single task scene this project ships. Loaded additively
-        // on top of the shell scene when start_task arrives, unloaded when the
-        // run ends. Must be in Build Settings.
-        //
-        // Two rig topologies are supported:
-        //   • Task scene contributes content only — no Camera/AudioListener,
-        //     no XR Origin. Leave shellRig empty; the shell scene's rig stays
-        //     on for both setup and runtime.
-        //   • Task scene brings its own XR Origin, mic handler, locomotion,
-        //     etc. (e.g. iva-cui's Hotel_Scene). Assign shellRig below; we
-        //     disable it while the task scene is loaded so two rigs don't
-        //     fight over head pose / Camera.main / AudioListener, and
-        //     re-enable it on unload so the operator UI is visible again
-        //     for setup and ratings.
-        public string taskSceneName;
-
-        [Tooltip("Optional. Root GameObject of the shell scene's XR Origin (and its AudioListener). Disabled while the task scene is loaded so the task scene's own rig owns Camera.main; re-enabled on unload. Leave null when the task scene contributes content only.")]
-        public GameObject shellRig;
-
         [Header("UI")]
         [Tooltip("Empty RectTransform under a Canvas. HUD label + controls row + log panel + rating section are all built inside it at runtime.")]
         public RectTransform rootContainer;
@@ -88,16 +67,16 @@ namespace QoeDevice {
         [Header("Log panel")]
         public int logMaxLines = 12;
 
-        [Header("Debug task start buttons")]
+        [Header("Task teleport")]
         [Tooltip("Player root to teleport — whichever of 'XR Interaction Setup' or 'WASD Player' is active in the scene.")]
         public Transform playerTransform;
-        [Tooltip("Spawn points for Training, Task 1, Task 2, Task 3 (index 0–3). Assign in the inspector.")]
+        [Tooltip("Spawn points indexed by task: [0]=Training (task_number null), [1]=Task 1, [2]=Task 2, [3]=Task 3. Assign in the inspector. start_task's task_number maps directly to this index (null→0).")]
         public Transform[] taskSpawnPoints = new Transform[4];
 
         [Header("Screen fade (VR comfort)")]
-        [Tooltip("Fades the view to black before a scene load so the headset compositor reprojects black during the main-thread activation freeze, instead of a frozen, head-tracked world (the nausea trigger). Auto-created on this GameObject if left null.")]
+        [Tooltip("Fades the view to black before a teleport so the headset compositor reprojects black during the swap. Auto-created on this GameObject if left null.")]
         public ScreenFader fader;
-        [Tooltip("Seconds for each fade-out / fade-in. ~0.3 is comfortable; the freeze itself is hidden regardless of this value.")]
+        [Tooltip("Seconds for each fade-out / fade-in. ~0.3 is comfortable.")]
         public float fadeDuration = 0.3f;
 
         string HttpBase    => $"http://{serverHost}:{serverPort}";
@@ -113,11 +92,12 @@ namespace QoeDevice {
         int activeRunId;
         string activeLabel;
         int maxDurationS;
+        // Spawn index for the current run, resolved from start_task's task_number
+        // (null/training → 0, N → N). Used by SendReadyManual to teleport.
+        int activeTaskIndex;
         Coroutine runCo;
         Coroutine connectTimeoutCo;
         const float ConnectTimeoutS = 10f;
-
-        bool taskSceneLoaded;
 
         readonly Queue<string> logLines = new();
         readonly ConcurrentQueue<Action> mainQ = new();
@@ -126,7 +106,6 @@ namespace QoeDevice {
         // per-phase visibility toggling (see UpdateUiVisibility).
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
-        PressDownButton debugTaskButton;
         static readonly string[] kTaskLabels = { "Training", "Task 1", "Task 2", "Task 3" };
         // Backend conversation scene to refresh per task (index matches kTaskLabels
         // / taskSpawnPoints). The backend keeps ONE global handler keyed by scene,
@@ -139,19 +118,13 @@ namespace QoeDevice {
         GameObject controlsRowGo;
         GameObject debugRowGo;
         GameObject logPanelGo;
-        // True while a debug task scene is loaded outside the normal session
-        // flow (no WS, no ready, no /end-condition). Lets the toggle button
-        // know whether to load or unload, and lets UpdateUiVisibility hide the
-        // controls/HUD just like during a real RunningTask.
-        bool debugTaskActive;
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
         void OnDisable() { Application.logMessageReceived -= OnUnityLog; }
 
         void Start() {
-            QoeLog.Event("init", $"server={HttpBase} kind={deviceKind} taskScene={(string.IsNullOrEmpty(taskSceneName) ? "NOT SET" : taskSceneName)}");
-            ValidateTaskSceneInBuildSettings();
+            QoeLog.Event("init", $"server={HttpBase} kind={deviceKind}");
             EnsureFader();
             BuildUi();
             SetHud("Ready — press Connect");
@@ -324,11 +297,12 @@ namespace QoeDevice {
             }
         }
 
-        // Debug-only row sitting under the controls row. Holds the Debug task
-        // toggle (and could grow more buttons later). Sized to match a single
-        // controls-row cell so it doesn't dominate vertically.
+        // Debug-only row sitting under the controls row: one teleport button per
+        // task (Training / Task 1–3) that jumps the rig straight to that agent
+        // and refreshes the backend scene, with no WS / ready / end-condition.
+        // Lets the developer hop between agents without the operator console.
         void BuildDebugRow(RectTransform parent) {
-            var rowGo = new GameObject("DebugRow", typeof(RectTransform));
+            var rowGo = new GameObject("DebugTeleportRow", typeof(RectTransform));
             debugRowGo = rowGo;
             rowGo.transform.SetParent(parent, false);
             var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
@@ -342,27 +316,6 @@ namespace QoeDevice {
             float rowInner = Mathf.Max(1f, parent.rect.width - 2f * ui.Sx(8));
             float btnW = (rowInner - 3f * ui.Sx(8)) / 4f;
             int btnH = Mathf.Max(ui.Sx(20), Mathf.RoundToInt(btnW / aspect));
-            var rowLe = rowGo.AddComponent<LayoutElement>();
-            rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
-
-            var rowRT = (RectTransform)rowGo.transform;
-            debugTaskButton = ui.BuildButton(rowRT, debugTaskActive ? "Stop task" : "Debug task",
-                new Color(0.45f, 0.45f, 0.5f), 18, ToggleDebugTask);
-            var le = debugTaskButton.GetComponent<LayoutElement>();
-            le.flexibleWidth = 1f;
-            le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
-
-            BuildTaskStartRow(parent, btnH);
-        }
-
-        void BuildTaskStartRow(RectTransform parent, int btnH) {
-            var rowGo = new GameObject("TaskStartRow", typeof(RectTransform));
-            rowGo.transform.SetParent(parent, false);
-            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
-            hg.spacing = ui.Sx(8);
-            hg.childForceExpandWidth = true; hg.childForceExpandHeight = false;
-            hg.childControlWidth = true; hg.childControlHeight = true;
-            hg.childAlignment = TextAnchor.MiddleCenter;
             var rowLe = rowGo.AddComponent<LayoutElement>();
             rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
 
@@ -394,16 +347,6 @@ namespace QoeDevice {
             rt.offsetMax = new Vector2(-ui.Sx(6), -ui.Sx(6));
         }
 
-        void ValidateTaskSceneInBuildSettings() {
-            if (string.IsNullOrEmpty(taskSceneName)) return;
-            int count = SceneManager.sceneCountInBuildSettings;
-            for (int i = 0; i < count; i++) {
-                var path = SceneUtility.GetScenePathByBuildIndex(i);
-                if (System.IO.Path.GetFileNameWithoutExtension(path) == taskSceneName) return;
-            }
-            QoeLog.Warn("task", $"taskSceneName '{taskSceneName}' not in Build Settings — load will fail");
-        }
-
         // ── Button actions ────────────────────────────────────────────────
         public void ConnectManual() {
             if (ws != null && (ws.State == WebSocketState.Open || ws.State == WebSocketState.Connecting)) return;
@@ -418,7 +361,6 @@ namespace QoeDevice {
 
         public void DisconnectManual() {
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
-            UnloadTaskScene();
             CloseWsIntentional();
             TransitionPhase(DevicePhase.Idle);
             SetHud("Disconnected — press Connect");
@@ -427,12 +369,17 @@ namespace QoeDevice {
         public void SendReadyManual() {
             if (phase != DevicePhase.TaskReceived) return;
             TransitionPhase(DevicePhase.LoadingTask);
-            SetHud($"Loading task '{activeLabel}'…");
-            StartCoroutine(LoadThenStart());
+            SetHud($"Starting task '{activeLabel}'…");
+            StartCoroutine(TeleportThenStart());
         }
 
-        IEnumerator LoadThenStart() {
-            yield return StartCoroutine(LoadTaskScene());
+        // Per the device contract: teleport to the task_number's spawn (no scene
+        // load), send `ready`, then close the WS and record locally for the run.
+        IEnumerator TeleportThenStart() {
+            TeleportToTask(activeTaskIndex);
+            // One frame so the rig move + camera-follower retarget settle before
+            // we tell the backend to apply netem and start the clock.
+            yield return null;
             QoeLog.Event("ws", $"sending ready for run {activeRunId}");
             SendJson(new { type = WsType.Ready });
             CloseWsIntentional();
@@ -452,7 +399,6 @@ namespace QoeDevice {
         }
 
         async void OnDestroy() {
-            _ = UnloadTaskScene();
             if (ws != null) await ws.Close();
         }
 
@@ -570,11 +516,22 @@ namespace QoeDevice {
             activeLabel  = data["label"]?.ToString() ?? "?";
             maxDurationS = data["max_condition_duration_s"]?.ToObject<int>() ?? 60;
 
-            QoeLog.Event("task", $"start_task: label='{activeLabel}' duration={maxDurationS}s run={activeRunId}");
+            // task_number: 1-based experiment task position, or null for training
+            // runs (CONTRACT.md). The task sequence is fixed, so task_number maps
+            // directly to a spawn index: null → 0 (Training), N → N.
+            int? taskNumber = data["task_number"]?.Type == JTokenType.Null
+                ? (int?)null
+                : data["task_number"]?.ToObject<int?>();
+            activeTaskIndex = taskNumber ?? 0;
+
+            string taskDesc = taskNumber.HasValue ? $"task_number={taskNumber.Value}" : "training (task_number=null)";
+            QoeLog.Event("task", $"start_task: label='{activeLabel}' {taskDesc} duration={maxDurationS}s run={activeRunId}");
             if (string.IsNullOrEmpty(activeSid)) QoeLog.Warn("task", "session_id is null/empty in start_task payload");
+            if (activeTaskIndex < 0 || activeTaskIndex >= taskSpawnPoints.Length)
+                QoeLog.Warn("task", $"task index {activeTaskIndex} out of range for taskSpawnPoints[{taskSpawnPoints.Length}] — Ready will fail to teleport");
 
             TransitionPhase(DevicePhase.TaskReceived);
-            SetHud($"Task received ('{activeLabel}') — press Ready to load and start");
+            SetHud($"Task received ('{activeLabel}') — press Ready to start");
         }
 
         IEnumerator RunTaskThenEnd() {
@@ -590,7 +547,6 @@ namespace QoeDevice {
                 yield return null;
             }
             QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
-            UnloadTaskScene();
             yield return PostEndCondition(activeSid);
             runCo = null;
         }
@@ -599,62 +555,24 @@ namespace QoeDevice {
             if (phase != DevicePhase.RunningTask) return;
             QoeLog.Event("task", $"end run early: run {activeRunId} '{activeLabel}'");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
-            UnloadTaskScene();
             SetHud("Ending run early — calling /end-condition…");
             StartCoroutine(PostEndCondition(activeSid));
         }
 
-        // Debug-only: load/unload the task scene without any networking
-        // (no WS, no /ready, no /end-condition, no rating). Lets the developer
-        // iterate on the in-scene XR setup, lighting, scripts, etc. without
-        // standing up the Express server. Refuses to engage during a real
-        // run so a misclick can't cross the wires.
-        public void ToggleDebugTask() {
-            if (phase == DevicePhase.RunningTask || phase == DevicePhase.TaskReceived || phase == DevicePhase.LoadingTask) {
-                QoeLog.Warn("task", $"debug task toggle ignored — already in {phase}");
-                return;
-            }
-            if (debugTaskActive) StartCoroutine(DebugTaskUnload());
-            else                 StartCoroutine(DebugTaskLoad());
-        }
-
-        IEnumerator DebugTaskLoad() {
-            QoeLog.Event("task", $"debug load: '{taskSceneName}'");
-            SetHud($"[debug] Loading '{taskSceneName}'…");
-            debugTaskActive = true;
-            UpdateDebugTaskButtonLabel();
-            UpdateUiVisibility();
-            yield return StartCoroutine(LoadTaskScene());
-            SetHud("[debug] task scene loaded — press Stop task to unload");
-        }
-
-        IEnumerator DebugTaskUnload() {
-            QoeLog.Event("task", "debug unload");
-            SetHud("[debug] unloading task scene…");
-            var op = UnloadTaskScene();
-            if (op != null) yield return op;
-            debugTaskActive = false;
-            UpdateDebugTaskButtonLabel();
-            UpdateUiVisibility();
-            SetHud("[debug] task scene unloaded");
-        }
-
-        void UpdateDebugTaskButtonLabel() {
-            if (debugTaskButton == null) return;
-            var lbl = debugTaskButton.GetComponentInChildren<TMP_Text>();
-            if (lbl != null) lbl.text = debugTaskActive ? "Stop task" : "Debug task";
-        }
-
-        // ── Debug task start buttons ──────────────────────────────────────
+        // ── Task teleport ─────────────────────────────────────────────────
+        // Move the player rig to a task's spawn point and switch the backend to
+        // that task's conversation scene. Used by both the debug task buttons
+        // (manual, no networking) and the real WS path (SendReadyManual →
+        // TeleportThenStart). taskIndex 0 = Training, 1–3 = Hotel agents.
         void TeleportToTask(int taskIndex) {
             if (playerTransform == null) {
                 QoeLog.Warn("task", "playerTransform not assigned — cannot teleport");
-                SetHud("[debug] playerTransform not set");
+                SetHud("playerTransform not set");
                 return;
             }
             if (taskIndex < 0 || taskIndex >= taskSpawnPoints.Length || taskSpawnPoints[taskIndex] == null) {
-                QoeLog.Warn("task", $"spawnPoint for {kTaskLabels[taskIndex]} not assigned");
-                SetHud($"[debug] spawn point for {kTaskLabels[taskIndex]} not set");
+                QoeLog.Warn("task", $"spawnPoint for index {taskIndex} not assigned");
+                SetHud($"spawn point for index {taskIndex} not set");
                 return;
             }
             var spawn = taskSpawnPoints[taskIndex];
@@ -666,112 +584,16 @@ namespace QoeDevice {
             string backendScene = kTaskBackendScenes[taskIndex];
             ServerInterface.RefreshScene(backendScene);
 
-            QoeLog.Event("task", $"[debug] teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
-            SetHud($"[debug] Teleported to {kTaskLabels[taskIndex]}");
+            QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
+            SetHud($"Teleported to {kTaskLabels[taskIndex]}");
         }
 
         public void AbandonRun() {
             if (phase != DevicePhase.RunningTask && phase != DevicePhase.TaskReceived && phase != DevicePhase.LoadingTask) return;
             QoeLog.Warn("task", $"abandon run {activeRunId} '{activeLabel}' phase={phase} — /end-condition NOT sent");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
-            UnloadTaskScene();
             SetHud("Run abandoned locally");
             TransitionPhase(DevicePhase.Idle);
-        }
-
-        // ── Task scene load/unload ────────────────────────────────────────
-        // Sequenced load to avoid a rig-binding race: Hotel_Scene's Awake/Start
-        // (XROrigin discovery in ApplyVRSettings, TrackedPoseDriver wiring, mic
-        // handler, etc.) must run with only ONE rig active in the world. If we
-        // disable the shell rig after activation, both rigs were briefly enabled
-        // when Hotel's scripts ran — Hotel's TrackedPoseDriver then fails to
-        // claim the HMD pose and the camera renders at floor height with no
-        // tracking. So:
-        //   1. Start the additive load with allowSceneActivation = false.
-        //   2. Wait until Unity reports load progress 0.9 (loaded but parked).
-        //   3. Disable the shell rig — this leaves the world with zero active
-        //      rigs for one frame, but no Hotel script has run yet.
-        //   4. Flip allowSceneActivation = true. Hotel's Awake/Start now runs
-        //      against a clean world and binds correctly to its own rig.
-        IEnumerator LoadTaskScene() {
-            if (string.IsNullOrEmpty(taskSceneName)) {
-                QoeLog.Warn("task", "taskSceneName is empty — skipping load");
-                yield break;
-            }
-            if (taskSceneLoaded) {
-                QoeLog.Warn("task", $"scene '{taskSceneName}' already loaded — unloading first");
-                yield return SceneManager.UnloadSceneAsync(taskSceneName);
-                taskSceneLoaded = false;
-            }
-            var op = SceneManager.LoadSceneAsync(taskSceneName, LoadSceneMode.Additive);
-            op.allowSceneActivation = false;
-            // Unity stalls progress at 0.9 while waiting for activation.
-            while (op.progress < 0.9f) yield return null;
-
-            if (shellRig != null) shellRig.SetActive(false);
-            // One frame for the disable to settle (XR plugin re-evaluates the
-            // active TrackedPoseDriver / camera at end-of-frame).
-            yield return null;
-
-            op.allowSceneActivation = true;
-            while (!op.isDone) yield return null;
-
-            taskSceneLoaded = true;
-            var loaded = SceneManager.GetSceneByName(taskSceneName);
-            if (loaded.IsValid()) SceneManager.SetActiveScene(loaded);
-            RetargetCanvasFollowerToActiveCamera();
-        }
-
-        AsyncOperation UnloadTaskScene() {
-            if (!taskSceneLoaded) return null;
-            taskSceneLoaded = false;
-            var op = SceneManager.UnloadSceneAsync(taskSceneName);
-            if (op != null) {
-                op.completed += _ => {
-                    var active = SceneManager.GetActiveScene();
-                    if (!active.IsValid() || active.name == taskSceneName) {
-                        for (int i = 0; i < SceneManager.sceneCount; i++) {
-                            var s = SceneManager.GetSceneAt(i);
-                            if (s.IsValid() && s.name != taskSceneName) { SceneManager.SetActiveScene(s); break; }
-                        }
-                    }
-                    // Hand the rig back: re-enable shell rig before doing
-                    // anything that needs Camera.main (the rating WS open
-                    // below, the canvas follower retarget). Order matters —
-                    // the task rig was just destroyed with its scene, so
-                    // Camera.main is null until the shell rig wakes up.
-                    if (shellRig != null) shellRig.SetActive(true);
-                    RetargetCanvasFollowerToActiveCamera();
-                    // Open the rating WS now (after unload, not during
-                    // active_condition) so request_rating fires while the
-                    // shell rig owns the camera. The operator console
-                    // re-issues request_rating on rating-WS reconnect, so
-                    // any owed rating for this run lands automatically.
-                    // Skip when the operator is disconnecting (Idle phase
-                    // with the device WS closed by us): the user wants the
-                    // device fully off, not the rating side reconnected.
-                    bool operatorDisconnect = phase == DevicePhase.Idle && wsClosedByUs;
-                    if (ratingClient != null && !operatorDisconnect) ratingClient.OpenWs(serverHost, serverPort);
-                };
-            }
-            return op;
-        }
-
-        // Refresh LazyCameraFollow.cam after a rig swap. The shell rig and
-        // task rig own different Camera.main transforms; without this the
-        // canvas would either keep tracking a destroyed transform or sit
-        // at world-origin until the user looks past the dead-zone.
-        void RetargetCanvasFollowerToActiveCamera() {
-            if (rootContainer == null) return;
-            var canvas = rootContainer.GetComponentInParent<Canvas>();
-            if (canvas == null) return;
-            var root = canvas.rootCanvas != null ? canvas.rootCanvas : canvas;
-            var follow = root.GetComponent<LazyCameraFollow>();
-            if (follow == null) return;
-            // Force a re-resolve: clear the stale transform so the helper
-            // re-picks up Camera.main. followCameraTarget overrides if set.
-            follow.cam = followCameraTarget;
-            follow.ResolveMainCameraIfMissing();
         }
 
         // ── HTTP ──────────────────────────────────────────────────────────

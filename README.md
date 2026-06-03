@@ -1,19 +1,19 @@
 # QoE Lab Modified IVA-CUI
 
 TODOs
+- [ ] IMPORTANT: Remove the artificial delay, and use the same filler for all agents
 - [ ] Replace the mic indicator icon from Rec to mic
 - [ ] Figure out how to present a pre-convo prompt for the test subject for each agent to have a bit of context. and we should probably pause? or disable convo before they read the context and press a button to start.
 
 ### QoE adaptation — deferred (do in separate commits)
 
 **Blockers / correctness**
-- [ ] **`QoeDeviceClient` Ready/Debug-task scene-load path contradicts the new single-scene teleport model.** `taskSceneName` is still `Hotel_Scene`, so pressing **Ready** additively loads a second copy of the Hotel scene on top of `QoE_Shell` → duplicate XR rig, camera, AudioListener, and duplicate singletons (`ServerInterface`/`StudyControls`/`AgentSelectionController`) that overwrite the originals. Fix: clear `taskSceneName` and/or disable the additive load path so only teleport is reachable.
 - [ ] **Add `QoE_Shell` to Build Settings (as scene 0).** Currently only `Hotel_Scene` is in the build list, so a Quest build would boot into the wrong scene. (In-editor "play from open scene" is unaffected.)
 - [ ] **Stuck-mic on network failure.** `someoneIsThinking` (Hotel, `StudyControls`) and `isThinking` (Training, `TrainingSceneController`) are only reset on the success path. Any ASR/TTS/download failure leaves the mic permanently blocked with no timeout — high relevance under netem loss/delay. Add a timeout/error reset.
 
 **Routing / multi-scene (needed before all 9 conversations work)**
-- [ ] **Scene-name routing is hardwired to Hotel.** With everything in one `QoE_Shell` scene, `StudyControls.DetermineUserStudySceneName()` can't distinguish City/Hotel/Museum and falls back to the serialized `userStudyScene` (Hotel). Needs `task_number`-driven role/scene selection. `HotelSceneController.HandleLLMDeterminedTask` throws `NotImplementedException` if a non-Hotel transition string arrives.
-- [ ] **Parse `task_number` in `QoeDeviceClient.OnStartTask`** and map it to the correct teleport target + agent role.
+- [ ] **Scene-name routing is hardwired to Hotel.** With everything in one `QoE_Shell` scene, `StudyControls.DetermineUserStudySceneName()` can't distinguish City/Hotel/Museum and falls back to the serialized `userStudyScene` (Hotel). The teleport path now refreshes the right backend scene per task (`kTaskBackendScenes`), but `StudyControls`'s own scene notion is still Hotel-only — revisit when City/Museum agents are added. `HotelSceneController.HandleLLMDeterminedTask` throws `NotImplementedException` if a non-Hotel transition string arrives.
+- [ ] **Extend `kTaskBackendScenes` / `taskSpawnPoints` for the City + Museum agents** once those scenes are merged in (currently 4 entries: Training + 3 Hotel). `task_number` already routes by index.
 
 **Prompts / conversation design (one-off conversations)**
 - [ ] **Rewrite the agent system prompts for self-contained, one-off conversations** instead of a continuous linear quest. Each agent visit should stand alone with no dependency on prior agents/tasks. Prompt files: `iva-cui-backend/python_middleware/transition_prompts_<scene>.py`. (Backend `/refresh/{scene}/` already wipes all conversation history and reseeds the system prompt — see `app.py:125` / `conversation_handler.py`, so each refresh = a clean conversation. This is the desired behavior; the prompts just need to match the one-off framing and drop the quest-transition logic.)
@@ -34,6 +34,7 @@ TODOs
 - Replaced `ActivationZone` trigger colliders with proximity-based activation (`AgentSelectionController` polls camera distance) so teleporting in front of an agent activates its zone.
 - Fixed agent voice/prompt routing: teleporting now refreshes the correct backend scene (`QoeDeviceClient.TeleportToTask` → `ServerInterface.RefreshScene`), instead of `TrainingSceneController` force-refreshing Training at startup and winning the race. Each teleport resets that scene's conversation fresh (one-off behavior).
 - Split `ServerInterface` connection into separate host / port / whisper-port Inspector fields (whisper reuses the host IP).
+- Reworked the real WS path to teleport instead of additively loading `Hotel_Scene`: `OnStartTask` parses `task_number` (null→Training index 0, N→index N per CONTRACT.md), and `Ready` (`SendReadyManual`→`TeleportThenStart`) teleports to that spawn + refreshes the backend scene, then sends `ready`. Removed the obsolete additive scene-load machinery (`taskSceneName`, `shellRig`, `LoadTaskScene`/`UnloadTaskScene`, the Debug-task scene toggle). Debug teleport buttons (Training/Task 1–3) retained.
 
 
 # IVA-CUI

@@ -133,17 +133,24 @@ namespace QoeDevice {
         static readonly Color kMicRecording = new(0.9f, 0.2f, 0.2f);
         static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
 
-        TMP_Text hudText;          // debug-only status line (top-center)
+        TMP_Text hudText;          // debug-only verbose status line (top-center)
         TMP_Text logText;          // debug-only log (bottom-right)
         TMP_Text timerText;        // task countdown (top-left, both modes)
         Image    micDot;           // mic indicator next to the timer
+        TMP_Text connStatusText;   // minimal connection status (top-right, non-debug)
+        TMP_Text errorText;        // center error banner (non-debug)
         GameObject hudGo;          // top-center status (debug only)
         GameObject topLeftGo;      // timer + mic cluster
         GameObject controlsGo;     // connect/disconnect/ready/end cluster (top-right)
         GameObject taskGridGo;     // Training + Task 1–9 grid (bottom, debug only)
         GameObject logPanelGo;     // log window (bottom-right, debug only)
+        GameObject connStatusGo;   // connection-status line (non-debug only)
+        GameObject errorGo;        // center error banner (non-debug only)
         RectTransform centerRegion;// rating UI + (later) pre-convo prompt
         MicrophoneHandler micHandler;
+        // Friendly, short connection-error message for the subject-facing UI.
+        // Empty = no error. The verbose detail still goes to the debug hud/log.
+        string lastError = "";
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
@@ -208,9 +215,11 @@ namespace QoeDevice {
             ui.scale = rootW > 0 ? Mathf.Clamp(rootW / 600f, 0.05f, 4f) : 1f;
 
             BuildTopLeftCluster(rootContainer);   // mic dot + timer
-            BuildHud(rootContainer);              // status text (debug only)
+            BuildHud(rootContainer);              // verbose status text (debug only)
+            BuildConnStatus(rootContainer);       // minimal conn status (non-debug)
             BuildControlsCluster(rootContainer);  // connect/disconnect/ready/end
             BuildCenterRegion(rootContainer);     // rating + (later) prompt
+            BuildErrorBanner(rootContainer);      // center error text (non-debug)
             if (debugMode) BuildTaskGrid(rootContainer, rootW, rootH);
             if (debugMode) BuildLogPanel(rootContainer);
 
@@ -244,10 +253,15 @@ namespace QoeDevice {
 
             // Timer + mic: meaningful only during a task, in both modes.
             if (topLeftGo  != null) topLeftGo.SetActive(running);
-            // Status / log / task grid: debug only.
+            // Verbose status / log / task grid: debug only.
             if (hudGo      != null) hudGo.SetActive(debugMode);
             if (logPanelGo != null) logPanelGo.SetActive(debugMode);
             if (taskGridGo != null) taskGridGo.SetActive(debugMode);
+            // Minimal connection status (top-right) + error banner (center):
+            // non-debug only. The error banner appears only when there's an
+            // error to show.
+            if (connStatusGo != null) connStatusGo.SetActive(!debugMode);
+            if (errorGo      != null) errorGo.SetActive(!debugMode && !string.IsNullOrEmpty(lastError));
 
             // Controls. Debug shows all four (enabled state handled separately);
             // normal shows only the one button whose action is currently valid,
@@ -353,7 +367,8 @@ namespace QoeDevice {
             tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
         }
 
-        // Top-center: status text. Debug only — non-debug shows no text at all.
+        // Top-center: verbose status text. Debug only — non-debug shows no
+        // verbose text at all (it gets the minimal connStatus line instead).
         void BuildHud(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "Status", new Vector2(0.4f, 0.86f), new Vector2(0.72f, 1f), ui.Sx(4));
             hudText = ui.BuildLabel(region, "", 16, FontStyles.Bold, new Color(0.55f, 0.7f, 1f), TextAlignmentOptions.Top);
@@ -362,13 +377,36 @@ namespace QoeDevice {
             QoeUI.StretchToParent((RectTransform)hudText.transform);
         }
 
+        // Top-right corner: a minimal one-line connection status for the
+        // subject-facing (non-debug) build — e.g. "Connected", "Connecting…",
+        // "Disconnected". Right-aligned so it tucks into the corner. The Connect
+        // button hides itself once connected; this line is what the subject sees
+        // in its place. Debug mode keeps the verbose hud instead, so this stays
+        // hidden there (UpdateUiVisibility).
+        void BuildConnStatus(RectTransform parent) {
+            // Thin strip across the very top-right. In non-debug the controls
+            // column starts just below this (see BuildControlsCluster), so the
+            // status line and the Connect button never collide.
+            var region = ui.BuildAnchoredRegion(parent, "ConnStatus", new Vector2(0.55f, 0.9f), new Vector2(1f, 1f), ui.Sx(6));
+            connStatusGo = region.gameObject;
+            connStatusText = ui.BuildLabel(region, "", 13, FontStyles.Normal, new Color(0.6f, 0.65f, 0.72f), TextAlignmentOptions.Right);
+            connStatusText.enableWordWrapping = false;
+            connStatusText.overflowMode = TextOverflowModes.Ellipsis;
+            QoeUI.StretchToParent((RectTransform)connStatusText.transform);
+        }
+
         // Top-right: the four control buttons stacked vertically, with a
         // "Preview rating" button below them (debug only). In debug all four
         // controls are present (enabled/dimmed per phase). In normal mode only
         // the single valid action is shown (UpdateUiVisibility), so the stack
         // reads as one button at the top-right.
         void BuildControlsCluster(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, 0.42f), new Vector2(1f, 1f), ui.Sx(6));
+            // Debug needs the full-height right column (5 buttons above the log).
+            // Non-debug shows at most one button, and the conn-status strip owns
+            // the very top-right — so start the column below that strip to avoid
+            // overlapping it.
+            float topAnchor = debugMode ? 0.42f : 0.78f;
+            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, topAnchor), new Vector2(1f, debugMode ? 1f : 0.9f), ui.Sx(6));
             controlsGo = region.gameObject;
             var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
             vlg.spacing = ui.Sx(5);
@@ -413,6 +451,20 @@ namespace QoeDevice {
             vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
             vlg.childControlWidth = true; vlg.childControlHeight = true;
             vlg.childAlignment = TextAnchor.UpperCenter;
+        }
+
+        // Center error banner (non-debug). Sits over the center region and shows
+        // a short, subject-friendly message when the connection fails or drops —
+        // the place a subject would be looking. Hidden when there's no error and
+        // in debug mode (where the verbose hud + log carry the detail). Built as
+        // its own anchored region (not a child of centerRegion) so it doesn't get
+        // swept when the rating client rebuilds the center's contents.
+        void BuildErrorBanner(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "ErrorBanner", new Vector2(0.12f, 0.4f), new Vector2(0.88f, 0.62f), ui.Sx(6));
+            errorGo = region.gameObject;
+            errorText = ui.BuildLabel(region, "", 18, FontStyles.Bold, new Color(0.95f, 0.45f, 0.4f), TextAlignmentOptions.Center);
+            errorText.enableWordWrapping = true;
+            QoeUI.StretchToParent((RectTransform)errorText.transform);
         }
 
         // Bottom strip: Training + Task 1–9 teleport buttons as a grid. Debug
@@ -463,6 +515,7 @@ namespace QoeDevice {
         // ── Button actions ────────────────────────────────────────────────
         public void ConnectManual() {
             if (ws != null && (ws.State == WebSocketState.Open || ws.State == WebSocketState.Connecting)) return;
+            ClearError();
             SetHud($"Connecting to {WsDeviceUrl}…");
             _ = ConnectWs();
             // Open the rating WS too. If the operator console issued a
@@ -550,6 +603,7 @@ namespace QoeDevice {
                 isConnecting = false;
                 if (connectTimeoutCo != null) { StopCoroutine(connectTimeoutCo); connectTimeoutCo = null; }
                 QoeLog.Event("ws", "connected");
+                ClearError();
                 SetHud("Connected — waiting for task...");
                 SendHello();
                 UpdateButtonStates();
@@ -566,6 +620,7 @@ namespace QoeDevice {
             ws.OnError += err => mainQ.Enqueue(() => {
                 QoeLog.Err("ws", err);
                 SetHud($"WS error: {err}");
+                SetError("Connection error. Please wait for the operator.");
             });
 
             ws.OnClose += code => mainQ.Enqueue(() => {
@@ -575,6 +630,9 @@ namespace QoeDevice {
                     SetHud(phase == DevicePhase.Idle
                         ? "Connection failed — press Connect to retry"
                         : $"Connection lost (code {code})");
+                    SetError(phase == DevicePhase.Idle
+                        ? "Could not reach the server. Please wait for the operator."
+                        : "Connection lost. Please wait for the operator.");
                 }
                 UpdateButtonStates();
             });
@@ -588,6 +646,7 @@ namespace QoeDevice {
             QoeLog.Warn("ws", $"Connect timed out after {ConnectTimeoutS}s");
             isConnecting = false;
             SetHud("Connection timed out — press Connect to retry");
+            SetError("Could not reach the server. Please wait for the operator.");
             UpdateButtonStates();
             connectTimeoutCo = null;
         }
@@ -830,6 +889,7 @@ namespace QoeDevice {
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
+            RefreshConnStatus();
         }
 
         // Toggle PressDownButton.interactable. The button dims its own backing
@@ -840,8 +900,37 @@ namespace QoeDevice {
             b.interactable = enabled;
         }
 
+        // Verbose status line — debug hud only. Also nudges the minimal
+        // connection-status corner text, which is derived from connection state
+        // rather than the verbose string.
         void SetHud(string s) {
             if (hudText != null) hudText.text = s;
+            RefreshConnStatus();
         }
+
+        // Minimal, subject-facing connection status for the top-right corner
+        // (non-debug). Derived from the live WS state so it stays correct no
+        // matter which code path changed things. Never surfaces internals — just
+        // Connected / Connecting… / Disconnected.
+        void RefreshConnStatus() {
+            if (connStatusText == null) return;
+            string s;
+            if (IsWsOpen)            s = "Connected";
+            else if (isConnecting)   s = "Connecting…";
+            else                     s = "Disconnected";
+            connStatusText.text = s;
+        }
+
+        // Center error banner (non-debug). Pass a short, subject-friendly line;
+        // empty/null clears it. Toggling it re-runs visibility so the banner
+        // shows/hides. The verbose detail still goes to the debug hud + log via
+        // the QoeLog.* calls at the original error sites.
+        void SetError(string msg) {
+            lastError = msg ?? "";
+            if (errorText != null) errorText.text = lastError;
+            UpdateUiVisibility();
+        }
+
+        void ClearError() => SetError("");
     }
 }

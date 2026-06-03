@@ -1,5 +1,21 @@
 # QoE Lab Modified IVA-CUI
 
+> **Orientation for future readers (humans & AI agents) — read this first.**
+>
+> **What this fork is.** This is a *modified* fork of the CUI '25 IVA-CUI project (the original README is preserved further down, under the `# IVA-CUI` heading). It is being adapted for a **master's thesis on Quality of Experience (QoE) in XR** — specifically, how network impairment (latency, jitter, bandwidth, packet loss) affects a free-form voice conversation with an LLM-powered virtual agent. The upstream project was a linear, walking VR quest; this fork is being reshaped into a controlled QoE experiment.
+>
+> **The big architectural shift.** In this fork the Unity app is the **"XR device"** in a separate experiment-orchestration framework called **QoE Lab** (an Electron operator console; lives in WSL at `~/sources/qoe-lab`, *not* in this repo). QoE Lab drives each trial over a WebSocket: it sends `start_task`, the device teleports the player in front of one agent for a timed conversation, then the device reports back and the network impairment (netem, applied on the PC) changes per condition. The device-side client is **`Assets/Scripts/QoE/QoeDeviceClient.cs`**; the wire contract it implements is documented in `~/sources/qoe-lab/CONTRACT.md` (XR device section). `NETEM_TRAFFIC.md` in this repo describes what actually crosses the shaped link.
+>
+> **What changed from upstream (so the noise makes sense).**
+> - The original 3 walking scenes (City/Hotel/Museum) + Training are being collapsed into **standalone, one-off short conversations** — the subject is *teleported* in front of each agent (no walking, no quest progression), talks for the trial duration, then is teleported to a neutral point.
+> - Right now **Training + Hotel are merged into one scene, `Assets/Scenes/QoE_Shell.unity`**, with spawn points in front of each agent. City/Museum aren't merged in yet. Task switching = teleport the XR rig, *not* scene loading.
+> - All shared controllers (mic, server I/O, study state, conversation logging, agent selection) are consolidated onto **one root `Scene Control` GameObject**. Much of the upstream per-scene/quest machinery (`StudyControls` counterbalancing, `PathRenderer`, inventory, `HotelSceneController` task transitions) is **dormant or only partly rewired** — don't assume a given upstream system is still on the critical path; verify against `QoeDeviceClient` + `Scene Control` first.
+> - The Python backend (`iva-cui-backend/`) is mostly unchanged and still useful: it keeps **one global conversation handler** keyed by scene (`/refresh/{scene}/` rebuilds it and wipes history), and serves ASR (`:8083`), LLM/TTS speak (`:8000`). Each teleport refreshes the right scene so the agent's prompt + voice match.
+>
+> **Standing constraints for this fork.** Keep changes minimal and avoid over-engineering — it's a thesis prototype, not production. Editor/scene work is often done by the user (Claude edits code; scene mutations via Unity MCP are done with care and left unsaved for review). The conversations are meant to be **self-contained one-offs**, not a connected narrative.
+>
+> The lists below track outstanding work and what's already been done in this adaptation.
+
 TODOs
 - [ ] IMPORTANT: Remove the artificial delay, and use the same filler for all agents
 - [ ] Depending on the task, we should determine if we end the condition based on if the task is finished or not, or if we let the timer run out, so basically check if we can reuse the original conversation end logic to check if the task is finished

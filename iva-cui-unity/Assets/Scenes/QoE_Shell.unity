@@ -664,7 +664,7 @@ MonoBehaviour:
   m_Script: {fileID: 1252864310}
   m_Name: 
   m_EditorClassIdentifier: 
-  interactable: 0
+  interactable: 1
 --- !u!114 &3914036
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -348657,6 +348657,7 @@ GameObject:
   - component: {fileID: 1666972488}
   - component: {fileID: 1666972487}
   - component: {fileID: 1666972494}
+  - component: {fileID: 1666972495}
   m_Layer: 0
   m_Name: Scene Control
   m_TagString: Untagged
@@ -348748,9 +348749,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ffa89c52cd16274419b7d757bc1c2adc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  selectedMicString: Microphone (Realtek(R) Audio)
+  selectedMicString: Headset Microphone (6- DualSense Wireless Controller)
   vrAudioSrc: {fileID: 0}
-  pcAudioSrc: {fileID: 0}
+  pcAudioSrc: {fileID: 1666972495}
   micUnavailableSound: {fileID: 8300000, guid: 7f999dfb3c0632d47b1b10b7add0436c, type: 3}
   micOnSound: {fileID: 8300000, guid: 88d9ee016451c4944b25bc8b745b120e, type: 3}
   micOffSound: {fileID: 8300000, guid: 172600c5fa66a794e986e7e275e286a5, type: 3}
@@ -348802,8 +348803,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 17361a5b6b867684dafe64ae887adba2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hostIpPort: 192.168.50.147:8000
-  whisperIpPort: http://192.168.50.147:8083/transcribe_audio/
+  hostIpPort: localhost:8000
+  whisperIpPort: http://localhost:8083/transcribe_audio/
   refreshAtStart: 1
 --- !u!114 &1666972494
 MonoBehaviour:
@@ -348823,9 +348824,105 @@ MonoBehaviour:
   endOfSceneObject: {fileID: 1319560027}
   delayResponseBy: 4.25
   stdevDelayResponseBy: 0.2
-  controllerMicButton: {fileID: -2829981993751271479, guid: c348712bda248c246b8c49b3db54643f, type: 3}
+  controllerMicButton: {fileID: -3438904107980372601, guid: c348712bda248c246b8c49b3db54643f, type: 3}
   trainingAgentHead: {fileID: 1498249633}
   micActivationRange: 2.5
+--- !u!82 &1666972495
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1666972485}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_PlayOnAwake: 0
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!1 &1667405894
 GameObject:
   m_ObjectHideFlags: 0
@@ -410192,7 +410289,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 800d0c06303c6d14193b13f82c17d45a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  serverHost: 192.168.50.177
+  serverHost: localhost
   serverPort: 8080
   deviceKind: quest3-unity
   deviceName: Quest 3 (Unity)

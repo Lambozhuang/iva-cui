@@ -31,9 +31,9 @@ public class MicrophoneHandler : MonoBehaviour
 
     private IEnumerator Start()
     {
-        if (vrAudioSrc != null && vrAudioSrc.isActiveAndEnabled)
+        if (vrAudioSrc != null)
             feedbackAudioSource = vrAudioSrc;
-        else if (pcAudioSrc != null && pcAudioSrc.isActiveAndEnabled)
+        else if (pcAudioSrc != null)
             feedbackAudioSource = pcAudioSrc;
         else
             Debug.LogError("No feedback audio source available.");
@@ -184,18 +184,21 @@ public class MicrophoneHandler : MonoBehaviour
 
     private void PlayMicSound(bool value)
     {
+        if (feedbackAudioSource == null) return;
         feedbackAudioSource.clip = value ? micOnSound : micOffSound;
         feedbackAudioSource.PlayOneShot(feedbackAudioSource.clip);
     }
 
     public void PlayMicUnavailableSound()
     {
+        if (feedbackAudioSource == null) return;
         feedbackAudioSource.clip = micUnavailableSound;
         feedbackAudioSource.PlayOneShot(feedbackAudioSource.clip);
     }
 
     public void PlayNewTaskAvailableNotificationSound()
     {
+        if (feedbackAudioSource == null) return;
         feedbackAudioSource.clip = newTaskAvailableSound;
         feedbackAudioSource.PlayOneShot(feedbackAudioSource.clip);
     }

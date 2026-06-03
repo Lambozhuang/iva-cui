@@ -114,12 +114,14 @@ namespace QoeDevice {
 
         // Solid-color rectangle button with a centered TMP label and a
         // PressDownButton listener. Caller can post-tweak the LayoutElement
-        // (minHeight, flexibleWidth, etc.) on the returned component.
+        // (minHeight, flexibleWidth, etc.) on the returned component. The
+        // PressDownButton owns its fill color from here on — pass the resting
+        // color in and it handles the controller-hover tint and disabled dim.
         public PressDownButton BuildButton(RectTransform parent, string text, Color color, int fontSize, Action onPress) {
             var go = new GameObject(text, typeof(RectTransform), typeof(Image), typeof(PressDownButton), typeof(LayoutElement));
             go.transform.SetParent(parent, false);
-            go.GetComponent<Image>().color = color;
             var btn = go.GetComponent<PressDownButton>();
+            btn.SetNormalColor(color);
             btn.onPress = onPress;
             var lbl = BuildLabel((RectTransform)go.transform, text, fontSize, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
             StretchToParent((RectTransform)lbl.transform);
@@ -130,11 +132,68 @@ namespace QoeDevice {
     /// Fires onPress on PointerDown rather than waiting for PointerUp/Click.
     /// Lets the user select inside a ScrollRect without their tap being eaten
     /// by scroll-drag detection that only resolves on release.
-    public class PressDownButton : MonoBehaviour, IPointerDownHandler {
+    ///
+    /// Owns the backing Image's fill color so the three visual states stay in
+    /// one place: resting (<see cref="SetNormalColor"/>), hovered (the
+    /// controller's UI ray is over it — fires via IPointerEnter/Exit from the
+    /// canvas's TrackedDeviceGraphicRaycaster), and disabled (dimmed). Pointer
+    /// enter/exit bubble up from the child label, so hover works even though the
+    /// TMP label is the actual raycast target.
+    public class PressDownButton : MonoBehaviour, IPointerDownHandler, IPointerEnterHandler, IPointerExitHandler {
         public Action onPress;
-        public bool interactable = true;
+
+        // How far the hover tint pushes the resting color, and how much the
+        // disabled state fades it (0.35 matches the dim QoeDeviceClient used to
+        // apply by hand). Hover brightens dark/colored fills and slightly darkens
+        // light ones, so the highlight reads on every button — including the
+        // white rating cells.
+        const float kHoverLerp = 0.20f;
+        const float kDisabledAlpha = 0.35f;
+
+        Color normalColor = Color.white;
+        Image img;
+        bool hovered;
+        bool _interactable = true;
+
+        public bool interactable {
+            get => _interactable;
+            set {
+                if (_interactable == value) return;
+                _interactable = value;
+                // Drop any stale hover so a disabled-then-re-enabled button
+                // doesn't light up until the ray actually re-enters it.
+                if (!value) hovered = false;
+                RefreshColor();
+            }
+        }
+
+        // Sets the resting fill. Callers that recolor a button (e.g. a rating
+        // cell going selected→blue) go through here so hover/disabled compose on
+        // top of the new base instead of fighting a directly-set Image color.
+        public void SetNormalColor(Color c) {
+            normalColor = c;
+            RefreshColor();
+        }
+
+        public void OnPointerEnter(PointerEventData _) { hovered = true;  RefreshColor(); }
+        public void OnPointerExit (PointerEventData _) { hovered = false; RefreshColor(); }
+
         public void OnPointerDown(PointerEventData _) {
             if (interactable) onPress?.Invoke();
+        }
+
+        void RefreshColor() {
+            if (img == null) img = GetComponent<Image>();
+            if (img == null) return;
+            Color c = (hovered && _interactable) ? HoverTint(normalColor) : normalColor;
+            if (!_interactable) c.a *= kDisabledAlpha;
+            img.color = c;
+        }
+
+        static Color HoverTint(Color c) {
+            float lum = 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+            return lum > 0.6f ? Color.Lerp(c, Color.black, kHoverLerp * 0.5f)
+                              : Color.Lerp(c, Color.white, kHoverLerp);
         }
     }
 }

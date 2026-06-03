@@ -18,6 +18,7 @@
 
 TODOs
 - [ ] IMPORTANT: Remove the artificial delay, and use the same filler for all agents
+- [ ] IMPORTANT: Add museum and city scenes
 - [ ] Depending on the task, we should determine if we end the condition based on if the task is finished or not, or if we let the timer run out, so basically check if we can reuse the original conversation end logic to check if the task is finished
 - [ ] Replace the mic indicator icon from Rec to mic
 - [ ] Figure out how to present a pre-convo prompt for the test subject for each agent to have a bit of context. and we should probably pause? or disable convo before they read the context and press a button to start.

@@ -700,16 +700,12 @@ namespace QoeDevice {
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
         }
 
-        // Toggle PressDownButton.interactable and dim the backing Image so the
-        // disabled state is visible at a glance.
+        // Toggle PressDownButton.interactable. The button dims its own backing
+        // Image when disabled (and applies the hover tint when enabled), so the
+        // disabled state stays visible at a glance without recoloring here.
         static void SetBtn(PressDownButton b, bool enabled) {
             if (b == null) return;
             b.interactable = enabled;
-            var img = b.GetComponent<Image>();
-            if (img != null) {
-                var c = img.color;
-                img.color = new Color(c.r, c.g, c.b, enabled ? 1f : 0.35f);
-            }
         }
 
         void SetHud(string s) {

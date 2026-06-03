@@ -366,18 +366,17 @@ namespace QoeDevice {
             rowLe.minHeight = ui.Sx(56);
 
             int? selected = null;
-            var imgs = new List<Image>();
+            var btns = new List<PressDownButton>();
             for (int i = 0; i < max - min + 1; i++) {
                 int v = min + i;
                 var labelText = (labels != null && i < labels.Count) ? labels[i].ToString() : "";
 
                 var btnGo = new GameObject($"Btn_{v}", typeof(RectTransform), typeof(Image), typeof(Outline), typeof(PressDownButton));
                 btnGo.transform.SetParent(rowGo.transform, false);
-                var img = btnGo.GetComponent<Image>();
-                img.color = Color.white;
-                imgs.Add(img);
                 btnGo.GetComponent<Outline>().effectColor = new Color(0.7f, 0.7f, 0.7f);
                 var btn = btnGo.GetComponent<PressDownButton>();
+                btn.SetNormalColor(Color.white);
+                btns.Add(btn);
 
                 var inner = new GameObject("Inner", typeof(RectTransform));
                 inner.transform.SetParent(btnGo.transform, false);
@@ -396,8 +395,8 @@ namespace QoeDevice {
                 btn.onPress = () => {
                     selected = captured;
                     SetAt(path, new Dictionary<string, object> { ["score"] = captured });
-                    for (int j = 0; j < imgs.Count; j++) {
-                        imgs[j].color = (j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white;
+                    for (int j = 0; j < btns.Count; j++) {
+                        btns[j].SetNormalColor((j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white);
                     }
                     UpdateSubmitInteractable();
                 };
@@ -543,22 +542,21 @@ namespace QoeDevice {
                 ui.BuildPxLabel((RectTransform)rowRT.transform, rowLabel, labelColW, TextAlignmentOptions.Left, 14);
                 var grid = NewMatrixGrid(rowRT, options.Count, cellW, cellH, spacing);
 
-                var cellImgs = new List<Image>();
+                var cellBtns = new List<PressDownButton>();
                 for (int i = 0; i < options.Count; i++) {
                     var cellGo = new GameObject($"Cell_{i}", typeof(RectTransform), typeof(Image), typeof(Outline), typeof(PressDownButton));
                     cellGo.transform.SetParent(grid.transform, false);
-                    var img = cellGo.GetComponent<Image>();
-                    img.color = Color.white;
-                    cellImgs.Add(img);
                     cellGo.GetComponent<Outline>().effectColor = new Color(0.7f, 0.7f, 0.7f);
                     var btn = cellGo.GetComponent<PressDownButton>();
+                    btn.SetNormalColor(Color.white);
+                    cellBtns.Add(btn);
                     int idx = i;
                     string keyCap = rowKey;
                     btn.onPress = () => {
                         rowSelections[keyCap] = idx;
                         SetAt(new List<string>(path) { keyCap }, idx);
-                        for (int j = 0; j < cellImgs.Count; j++) {
-                            cellImgs[j].color = (j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white;
+                        for (int j = 0; j < cellBtns.Count; j++) {
+                            cellBtns[j].SetNormalColor((j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white);
                         }
                         UpdateSubmitInteractable();
                     };

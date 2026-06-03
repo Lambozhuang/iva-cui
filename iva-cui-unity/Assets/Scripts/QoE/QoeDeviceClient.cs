@@ -128,6 +128,11 @@ namespace QoeDevice {
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
         PressDownButton debugTaskButton;
         static readonly string[] kTaskLabels = { "Training", "Task 1", "Task 2", "Task 3" };
+        // Backend conversation scene to refresh per task (index matches kTaskLabels
+        // / taskSpawnPoints). The backend keeps ONE global handler keyed by scene,
+        // so we must refresh the right scene when teleporting or agent1/2/3 resolve
+        // to the wrong scene's prompt + voice. Tasks 1–3 are all Hotel agents.
+        static readonly string[] kTaskBackendScenes = { "Training", "Hotel", "Hotel", "Hotel" };
         TMP_Text hudText;
         TMP_Text logText;
         GameObject hudGo;
@@ -654,7 +659,14 @@ namespace QoeDevice {
             }
             var spawn = taskSpawnPoints[taskIndex];
             playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
-            QoeLog.Event("task", $"[debug] teleported to {kTaskLabels[taskIndex]}");
+
+            // Switch the backend to this task's scene so agent1/2/3 use the right
+            // prompts + voice. Without this the global handler stays on whichever
+            // scene was refreshed last at startup (the Training/Hotel race).
+            string backendScene = kTaskBackendScenes[taskIndex];
+            ServerInterface.RefreshScene(backendScene);
+
+            QoeLog.Event("task", $"[debug] teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
             SetHud($"[debug] Teleported to {kTaskLabels[taskIndex]}");
         }
 

@@ -2,6 +2,7 @@
 
 TODOs
 - [ ] Replace the mic indicator icon from Rec to mic
+- [ ] Figure out how to present a pre-convo prompt for the test subject for each agent to have a bit of context. and we should probably pause? or disable convo before they read the context and press a button to start.
 
 ### QoE adaptation — deferred (do in separate commits)
 
@@ -13,6 +14,10 @@ TODOs
 **Routing / multi-scene (needed before all 9 conversations work)**
 - [ ] **Scene-name routing is hardwired to Hotel.** With everything in one `QoE_Shell` scene, `StudyControls.DetermineUserStudySceneName()` can't distinguish City/Hotel/Museum and falls back to the serialized `userStudyScene` (Hotel). Needs `task_number`-driven role/scene selection. `HotelSceneController.HandleLLMDeterminedTask` throws `NotImplementedException` if a non-Hotel transition string arrives.
 - [ ] **Parse `task_number` in `QoeDeviceClient.OnStartTask`** and map it to the correct teleport target + agent role.
+
+**Prompts / conversation design (one-off conversations)**
+- [ ] **Rewrite the agent system prompts for self-contained, one-off conversations** instead of a continuous linear quest. Each agent visit should stand alone with no dependency on prior agents/tasks. Prompt files: `iva-cui-backend/python_middleware/transition_prompts_<scene>.py`. (Backend `/refresh/{scene}/` already wipes all conversation history and reseeds the system prompt — see `app.py:125` / `conversation_handler.py`, so each refresh = a clean conversation. This is the desired behavior; the prompts just need to match the one-off framing and drop the quest-transition logic.)
+- [ ] Decide whether per-agent refresh is needed. Currently `/refresh/Hotel/` rebuilds ALL three Hotel agents (resets the other two as well as the one being visited). Fine for one-off conversations, but means you can't teleport away and back mid-conversation without losing it.
 
 **On-device (Quest) logging**
 - [ ] **`SceneProfiling` / `ConversationLogger` write to `streamingAssetsPath`**, which is read-only inside the APK on Android — `File.Write/Append` will throw on-device. Move logs to `Application.persistentDataPath` for Quest builds.
@@ -27,6 +32,8 @@ TODOs
 - Training mic gated by proximity to the robot head; `StudyControls` mirror-guards so the two mic pipelines don't double-fire.
 - `ApplyVRSettings` only forces the Quest mic when that device is present (keeps the Inspector-selected mic on PC/Simulator).
 - Replaced `ActivationZone` trigger colliders with proximity-based activation (`AgentSelectionController` polls camera distance) so teleporting in front of an agent activates its zone.
+- Fixed agent voice/prompt routing: teleporting now refreshes the correct backend scene (`QoeDeviceClient.TeleportToTask` → `ServerInterface.RefreshScene`), instead of `TrainingSceneController` force-refreshing Training at startup and winning the race. Each teleport resets that scene's conversation fresh (one-off behavior).
+- Split `ServerInterface` connection into separate host / port / whisper-port Inspector fields (whisper reuses the host IP).
 
 
 # IVA-CUI

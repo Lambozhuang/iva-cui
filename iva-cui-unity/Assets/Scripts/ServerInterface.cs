@@ -48,6 +48,21 @@ public class ServerInterface : MonoBehaviour
         instance.StartCoroutine(instance.SendRefreshRequest("Training"));
     }
 
+    // Refresh the backend conversation for an explicit scene name (e.g. "Hotel",
+    // "Training", "Museum", "Shirts"). The backend keeps a single global handler
+    // built from transition_prompts_<scene>.py, so this selects which scene's
+    // per-agent prompts + voices `agent1/2/3` resolve to. Call this when the
+    // player teleports to an agent so the right scene is active server-side.
+    public static void RefreshScene(string sceneName)
+    {
+        if (instance == null)
+        {
+            Debug.LogError("ServerInterface.RefreshScene: no instance.");
+            return;
+        }
+        instance.StartCoroutine(instance.SendRefreshRequest(sceneName));
+    }
+
     private IEnumerator SendRefreshRequest(string sceneToRefresh)
     {
         Debug.Log("Sending refresh request for " + sceneToRefresh);

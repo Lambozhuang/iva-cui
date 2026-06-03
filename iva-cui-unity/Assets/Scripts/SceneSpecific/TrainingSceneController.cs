@@ -117,7 +117,12 @@ public class TrainingSceneController : MonoBehaviour
 
     private void Start()
     {
-        ServerInterface.RefreshTrainingConversation();
+        // NOTE: the backend conversation refresh is no longer done here. With
+        // Training + Hotel merged into one scene, an unconditional /refresh/Training/
+        // at startup raced the Hotel refresh and left the global handler on
+        // Training — so Hotel agents answered with Alfred's prompt + voice.
+        // Refresh now happens per-teleport in QoeDeviceClient.TeleportToTask,
+        // which resets the correct scene right before the player talks.
 
         microphoneHandler = FindObjectOfType<MicrophoneHandler>();
         if (microphoneHandler == null)

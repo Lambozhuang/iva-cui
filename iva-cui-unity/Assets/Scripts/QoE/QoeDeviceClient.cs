@@ -46,7 +46,7 @@ namespace QoeDevice {
         [Tooltip("If true, attach LazyCameraFollow to the canvas so it hovers in front of the player camera.")]
         public bool followCamera = true;
         [Tooltip("Distance (m) the canvas sits in front of the camera when followCamera is on.")]
-        public float followDistance = 1.5f;
+        public float followDistance = 1.0f;
         [Tooltip("Camera tracked when followCamera is on. Falls back to Camera.main if null.")]
         public Transform followCameraTarget;
 
@@ -59,10 +59,6 @@ namespace QoeDevice {
         [Header("Debug")]
         [Tooltip("When on, renders the log panel and the rating section's 'Debug preview' button. Turn off for subject-facing builds.")]
         public bool debugMode = true;
-
-        [Header("Controls row")]
-        [Tooltip("Width-to-height ratio for each button in the controls row. 2.0 = button is twice as wide as tall.")]
-        public float controlsButtonAspect = 2f;
 
         [Header("Log panel")]
         public int logMaxLines = 12;
@@ -90,6 +86,8 @@ namespace QoeDevice {
         bool isConnecting;
         DevicePhase phase = DevicePhase.Idle;
 
+        bool IsWsOpen => ws != null && ws.State == WebSocketState.Open;
+
         string activeSid;
         int activeRunId;
         string activeLabel;
@@ -105,21 +103,46 @@ namespace QoeDevice {
         readonly ConcurrentQueue<Action> mainQ = new();
 
         // Code-built UI. References saved here for runtime updates and for
-        // per-phase visibility toggling (see UpdateUiVisibility).
+        // per-phase / per-mode visibility toggling (see UpdateUiVisibility).
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton;
-        static readonly string[] kTaskLabels = { "Training", "Task 1", "Task 2", "Task 3" };
+        // Training + Task 1–9 (the eventual 3 scenes × 3 agents). Only the first
+        // few have spawn points / backend scenes wired today; the rest render as
+        // debug buttons but TeleportToTask no-ops on them until they're assigned.
+        static readonly string[] kTaskLabels = {
+            "Training", "Task 1", "Task 2", "Task 3", "Task 4",
+            "Task 5", "Task 6", "Task 7", "Task 8", "Task 9",
+        };
         // Backend conversation scene to refresh per task (index matches kTaskLabels
         // / taskSpawnPoints). The backend keeps ONE global handler keyed by scene,
         // so we must refresh the right scene when teleporting or agent1/2/3 resolve
-        // to the wrong scene's prompt + voice. Tasks 1–3 are all Hotel agents.
-        static readonly string[] kTaskBackendScenes = { "Training", "Hotel", "Hotel", "Hotel" };
-        TMP_Text hudText;
-        TMP_Text logText;
-        GameObject hudGo;
-        GameObject controlsRowGo;
-        GameObject debugRowGo;
-        GameObject logPanelGo;
+        // to the wrong scene's prompt + voice. Tasks 1–3 are Hotel agents; 4–9 are
+        // unassigned (empty → no refresh) until City/Museum are merged in.
+        static readonly string[] kTaskBackendScenes = {
+            "Training", "Hotel", "Hotel", "Hotel", "",
+            "", "", "", "", "",
+        };
+
+        // Palette (shared by controls + task grid + mic dot).
+        static readonly Color kBlue  = new(0.16f, 0.5f,  0.95f);
+        static readonly Color kGray  = new(0.55f, 0.55f, 0.6f);
+        static readonly Color kGreen = new(0.2f,  0.7f,  0.35f);
+        static readonly Color kRed   = new(0.8f,  0.35f, 0.25f);
+        static readonly Color kTaskBtn = new(0.3f, 0.4f, 0.55f);
+        static readonly Color kMicRecording = new(0.9f, 0.2f, 0.2f);
+        static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
+
+        TMP_Text hudText;          // debug-only status line (top-center)
+        TMP_Text logText;          // debug-only log (bottom-right)
+        TMP_Text timerText;        // task countdown (top-left, both modes)
+        Image    micDot;           // mic indicator next to the timer
+        GameObject hudGo;          // top-center status (debug only)
+        GameObject topLeftGo;      // timer + mic cluster
+        GameObject controlsGo;     // connect/disconnect/ready/end cluster (top-right)
+        GameObject taskGridGo;     // Training + Task 1–9 grid (bottom, debug only)
+        GameObject logPanelGo;     // log window (bottom-right, debug only)
+        RectTransform centerRegion;// rating UI + (later) pre-convo prompt
+        MicrophoneHandler micHandler;
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
@@ -142,13 +165,22 @@ namespace QoeDevice {
         }
 
         // ── UI ───────────────────────────────────────────────────────────
-        // Builds the entire merged HUD inside rootContainer (a single canvas
-        // hosts both device controls and the rating section):
-        //   [HUD label]
-        //   [Connect | Disconnect | Ready | End Run] (equal-width row)
-        //   [Log panel]
-        //   [Rating section — status bar + scrolling form area, flex height]
-        // rootContainer's vertical layout group stacks them in that order.
+        // Builds a corner-anchored HUD inside rootContainer (stretched to fill
+        // the canvas). Regions are placed by fractional anchors so they scale
+        // with the canvas. Layout (debug mode shows all of it):
+        //
+        //   ┌ TL: mic+timer ─┬ TC: status ─┬ TR: controls ┐
+        //   │                              │  Connect      │
+        //   │        CENTER                │  Disconnect   │
+        //   │   (rating / pre-convo prompt)│  Ready        │
+        //   │                              │  End Run      │
+        //   ├ task grid (Training, 1–9) ───┴─ log window ──┤
+        //   └──────────────────────────────────────────────┘
+        //
+        // Non-debug mode strips it to the essentials: mic+timer (during a task),
+        // the single relevant control button top-right (Connect / Ready / End,
+        // shown only when its action is valid), and the center rating form. No
+        // status text, no log, no task grid, no titles/labels.
         void BuildUi() {
             if (rootContainer == null) {
                 QoeLog.Err("ui", "rootContainer not assigned — cannot build device UI");
@@ -158,54 +190,82 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
+            // Earlier builds (and edit-mode previews) stacked children with a
+            // VerticalLayoutGroup on the root; the corner layout positions its
+            // own children, so any inherited layout driver must go.
+            StripComponent<VerticalLayoutGroup>(rootContainer.gameObject);
+            StripComponent<HorizontalLayoutGroup>(rootContainer.gameObject);
+            StripComponent<ContentSizeFitter>(rootContainer.gameObject);
+
+            // Fill the canvas so fractional anchors map to the full panel.
+            rootContainer.anchorMin = Vector2.zero; rootContainer.anchorMax = Vector2.one;
+            rootContainer.offsetMin = Vector2.zero; rootContainer.offsetMax = Vector2.zero;
+
             Canvas.ForceUpdateCanvases();
-            float w = rootContainer.rect.width;
-            ui.scale = w > 0 ? Mathf.Clamp(w / 600f, 0.05f, 4f) : 1f;
+            float rootW = rootContainer.rect.width;
+            float rootH = rootContainer.rect.height;
+            ui.scale = rootW > 0 ? Mathf.Clamp(rootW / 600f, 0.05f, 4f) : 1f;
 
-            var rootVlg = rootContainer.GetComponent<VerticalLayoutGroup>();
-            if (rootVlg == null) rootVlg = rootContainer.gameObject.AddComponent<VerticalLayoutGroup>();
-            rootVlg.spacing = ui.Sx(6);
-            rootVlg.padding = new RectOffset(ui.Sx(8), ui.Sx(8), ui.Sx(8), ui.Sx(8));
-            rootVlg.childForceExpandWidth = true; rootVlg.childForceExpandHeight = false;
-            rootVlg.childControlWidth = true; rootVlg.childControlHeight = true;
-
-            hudText = ui.BuildLabel(rootContainer, "", 18, FontStyles.Bold, new Color(0.1f, 0.3f, 0.7f));
-            hudGo = hudText.gameObject;
-            var hudLe = hudGo.AddComponent<LayoutElement>();
-            hudLe.minHeight = ui.Sx(28); hudLe.preferredHeight = ui.Sx(28);
-
-            BuildControlsRow(rootContainer);
-            if (debugMode) BuildDebugRow(rootContainer);
+            BuildTopLeftCluster(rootContainer);   // mic dot + timer
+            BuildHud(rootContainer);              // status text (debug only)
+            BuildControlsCluster(rootContainer);  // connect/disconnect/ready/end
+            BuildCenterRegion(rootContainer);     // rating + (later) prompt
+            if (debugMode) BuildTaskGrid(rootContainer, rootW, rootH);
             if (debugMode) BuildLogPanel(rootContainer);
 
             if (ratingClient != null) {
-                ratingClient.BuildUi(rootContainer, debugMode);
+                ratingClient.BuildUi(centerRegion, debugMode);
                 ratingClient.OnFormVisibilityChanged = _ => UpdateUiVisibility();
             }
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(rootContainer);
             AttachCanvasFollower();
+            UpdateButtonStates();
             UpdateUiVisibility();
         }
 
-        // Visibility rules:
-        //   debugMode on  → always show everything (HUD label + controls + log + rating section).
-        //   debugMode off → hide HUD label + controls during RunningTask so the
-        //                   subject sees only the task scene; restore on next phase.
-        //                   When a rating form is visible, hide controls + HUD
-        //                   so the subject only sees the rating UI.
+        // Drives per-region and per-button visibility for the two modes. Called
+        // on every phase change, rating-form toggle, and at build time.
+        //
+        //   debug   → show everything; all four control buttons visible and
+        //             dimmed/enabled per phase (UpdateButtonStates).
+        //   normal  → mic+timer only during a task; exactly one control button
+        //             (the valid one) top-right; center rating form when present;
+        //             no status text, log, or task grid.
         void UpdateUiVisibility() {
             if (rootContainer == null) return;
+            rootContainer.gameObject.SetActive(true);
+
             bool ratingVisible = ratingClient != null && ratingClient.IsFormVisible;
-            bool running = phase == DevicePhase.RunningTask;
-            bool showCanvas = debugMode || !running;
-            bool showControls = debugMode || (!running && !ratingVisible);
-            bool showHud = debugMode || (!running && !ratingVisible);
-            rootContainer.gameObject.SetActive(showCanvas);
-            if (hudGo != null) hudGo.SetActive(showHud);
-            if (controlsRowGo != null) controlsRowGo.SetActive(showControls);
-            if (debugRowGo != null) debugRowGo.SetActive(debugMode);
+            bool running       = phase == DevicePhase.RunningTask;
+            bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
+            bool taskReceived  = phase == DevicePhase.TaskReceived;
+
+            // Timer + mic: meaningful only during a task, in both modes.
+            if (topLeftGo  != null) topLeftGo.SetActive(running);
+            // Status / log / task grid: debug only.
+            if (hudGo      != null) hudGo.SetActive(debugMode);
             if (logPanelGo != null) logPanelGo.SetActive(debugMode);
+            if (taskGridGo != null) taskGridGo.SetActive(debugMode);
+
+            // Controls. Debug shows all four (enabled state handled separately);
+            // normal shows only the one button whose action is currently valid,
+            // and hides Disconnect entirely.
+            SetActive(connectButton,    debugMode || (canConnect   && !ratingVisible));
+            SetActive(disconnectButton, debugMode);
+            SetActive(sendReadyButton,  debugMode || (taskReceived && !ratingVisible));
+            SetActive(endRunEarlyButton, debugMode || running);
+            if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running);
+        }
+
+        static void SetActive(PressDownButton b, bool on) {
+            if (b != null) b.gameObject.SetActive(on);
+        }
+
+        static void StripComponent<T>(GameObject go) where T : Component {
+            var c = go.GetComponent<T>();
+            if (c == null) return;
+            if (Application.isPlaying) Destroy(c); else DestroyImmediate(c);
         }
 
         // Walks up from rootContainer to its Canvas root and attaches a
@@ -259,91 +319,125 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            hudGo = controlsRowGo = debugRowGo = logPanelGo = null;
+            hudGo = topLeftGo = controlsGo = taskGridGo = logPanelGo = null;
+            timerText = null; micDot = null; centerRegion = null;
         }
 
-        void BuildControlsRow(RectTransform parent) {
-            var rowGo = new GameObject("ControlsRow", typeof(RectTransform));
-            controlsRowGo = rowGo;
-            rowGo.transform.SetParent(parent, false);
-            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
+        // ── Corner regions ─────────────────────────────────────────────────
+        // Top-left: mic indicator dot + task countdown timer. Shown in BOTH
+        // modes, but only while a task is running (UpdateUiVisibility gates it).
+        void BuildTopLeftCluster(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0f, 0.84f), new Vector2(0.4f, 1f), ui.Sx(6));
+            topLeftGo = region.gameObject;
+            var hg = region.gameObject.AddComponent<HorizontalLayoutGroup>();
             hg.spacing = ui.Sx(8);
-            // childForceExpandHeight=false: the row honors each button's
-            // preferredHeight instead of stretching them to fill row height.
-            // childForceExpandWidth=true + flexibleWidth=1 below: buttons split
-            // remaining width equally.
-            hg.childForceExpandWidth = true; hg.childForceExpandHeight = false;
+            hg.childForceExpandWidth = false; hg.childForceExpandHeight = true;
             hg.childControlWidth = true; hg.childControlHeight = true;
-            hg.childAlignment = TextAnchor.MiddleCenter;
+            hg.childAlignment = TextAnchor.MiddleLeft;
 
-            // Each button is equal-width: btnW = (rowInner − 3·spacing) / 4.
-            // Height follows from controlsButtonAspect (w/h), so widening the
-            // canvas grows buttons proportionally and the row's height stays
-            // tied to button width — independent of how tall the canvas is.
-            float aspect = Mathf.Max(0.1f, controlsButtonAspect);
-            float rowInner = Mathf.Max(1f, parent.rect.width - 2f * ui.Sx(8));
-            float btnW = (rowInner - 3f * ui.Sx(8)) / 4f;
-            int btnH = Mathf.Max(ui.Sx(20), Mathf.RoundToInt(btnW / aspect));
-            var rowLe = rowGo.AddComponent<LayoutElement>();
-            rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
+            // Mic dot — a small square Image whose color tracks IsRecording.
+            var dotGo = new GameObject("MicDot", typeof(RectTransform), typeof(Image));
+            dotGo.transform.SetParent(region, false);
+            micDot = dotGo.GetComponent<Image>();
+            micDot.color = kMicIdle;
+            var dotLe = dotGo.AddComponent<LayoutElement>();
+            int dot = ui.Sx(20);
+            dotLe.minWidth = dot; dotLe.preferredWidth = dot; dotLe.flexibleWidth = 0;
+            dotLe.minHeight = dot; dotLe.preferredHeight = dot; dotLe.flexibleHeight = 0;
 
-            var rowRT = (RectTransform)rowGo.transform;
-            connectButton     = ui.BuildButton(rowRT, "Connect",    new Color(0.16f, 0.5f, 0.95f),  22, ConnectManual);
-            disconnectButton  = ui.BuildButton(rowRT, "Disconnect", new Color(0.55f, 0.55f, 0.6f),  22, DisconnectManual);
-            sendReadyButton   = ui.BuildButton(rowRT, "Ready",      new Color(0.2f, 0.7f, 0.35f),   22, SendReadyManual);
-            endRunEarlyButton = ui.BuildButton(rowRT, "End Run",    new Color(0.8f, 0.35f, 0.25f),  22, EndRunEarly);
+            timerText = ui.BuildLabel(region, "", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
+            timerText.enableWordWrapping = false;
+            var tle = timerText.gameObject.AddComponent<LayoutElement>();
+            tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
+        }
+
+        // Top-center: status text. Debug only — non-debug shows no text at all.
+        void BuildHud(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Status", new Vector2(0.4f, 0.86f), new Vector2(0.72f, 1f), ui.Sx(4));
+            hudText = ui.BuildLabel(region, "", 16, FontStyles.Bold, new Color(0.55f, 0.7f, 1f), TextAlignmentOptions.Top);
+            hudText.enableWordWrapping = true;
+            hudGo = hudText.gameObject;
+            QoeUI.StretchToParent((RectTransform)hudText.transform);
+        }
+
+        // Top-right: the four control buttons stacked vertically. In debug all
+        // four are present (enabled/dimmed per phase). In normal mode only the
+        // single valid action is shown (UpdateUiVisibility), so the stack reads
+        // as one button at the top-right.
+        void BuildControlsCluster(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.74f, 0.5f), new Vector2(1f, 1f), ui.Sx(6));
+            controlsGo = region.gameObject;
+            var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(6);
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+
+            connectButton     = ui.BuildButton(region, "Connect",    kBlue,  20, ConnectManual);
+            disconnectButton  = ui.BuildButton(region, "Disconnect", kGray,  20, DisconnectManual);
+            sendReadyButton   = ui.BuildButton(region, "Ready",      kGreen, 20, SendReadyManual);
+            endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   20, EndRunEarly);
+            int btnH = ui.Sx(40);
             foreach (var b in new[] { connectButton, disconnectButton, sendReadyButton, endRunEarlyButton }) {
                 var le = b.GetComponent<LayoutElement>();
-                le.flexibleWidth = 1f;
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
             }
         }
 
-        // Debug-only row sitting under the controls row: one teleport button per
-        // task (Training / Task 1–3) that jumps the rig straight to that agent
-        // and refreshes the backend scene, with no WS / ready / end-condition.
-        // Lets the developer hop between agents without the operator console.
-        void BuildDebugRow(RectTransform parent) {
-            var rowGo = new GameObject("DebugTeleportRow", typeof(RectTransform));
-            debugRowGo = rowGo;
-            rowGo.transform.SetParent(parent, false);
-            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
-            hg.spacing = ui.Sx(8);
-            hg.childForceExpandWidth = true; hg.childForceExpandHeight = false;
-            hg.childControlWidth = true; hg.childControlHeight = true;
-            hg.childAlignment = TextAnchor.MiddleCenter;
+        // Center: reserved for the rating form and (later) the pre-conversation
+        // prompt/context. The rating client builds its section inside this rect.
+        // The footprint depends on mode: debug keeps clear of the right control
+        // column and the bottom task-grid/log strip, so it's a narrower box in
+        // the middle-left; non-debug has none of that furniture, so it spreads
+        // across nearly the whole panel (only the slim top band stays reserved
+        // for the timer + the single top-right action button).
+        void BuildCenterRegion(RectTransform parent) {
+            Vector2 min = debugMode ? new Vector2(0.12f, 0.18f) : new Vector2(0.08f, 0.06f);
+            Vector2 max = debugMode ? new Vector2(0.73f, 0.82f) : new Vector2(0.92f, 0.82f);
+            centerRegion = ui.BuildAnchoredRegion(parent, "Center", min, max, ui.Sx(4));
+            var vlg = centerRegion.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(6);
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+        }
 
-            // Match the controls row's per-button height for visual continuity.
-            float aspect = Mathf.Max(0.1f, controlsButtonAspect);
-            float rowInner = Mathf.Max(1f, parent.rect.width - 2f * ui.Sx(8));
-            float btnW = (rowInner - 3f * ui.Sx(8)) / 4f;
-            int btnH = Mathf.Max(ui.Sx(20), Mathf.RoundToInt(btnW / aspect));
-            var rowLe = rowGo.AddComponent<LayoutElement>();
-            rowLe.minHeight = btnH; rowLe.preferredHeight = btnH; rowLe.flexibleHeight = 0;
+        // Bottom strip: Training + Task 1–9 teleport buttons as a grid. Debug
+        // only. Each jumps the rig straight to that agent and refreshes the
+        // backend scene — no WS / ready / end-condition. The grid auto-sizes its
+        // cells to fit the panel width across kTaskLabels.Length entries.
+        void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
+            var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(0.7f, 0.16f), ui.Sx(6));
+            taskGridGo = region.gameObject;
+            var grid = region.gameObject.AddComponent<GridLayoutGroup>();
+            grid.spacing = new Vector2(ui.Sx(4), ui.Sx(4));
+            grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
+            grid.startAxis = GridLayoutGroup.Axis.Horizontal;
+            grid.childAlignment = TextAnchor.MiddleCenter;
+            grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            int cols = 5; // 10 task buttons → 5×2 grid
+            grid.constraintCount = cols;
+            float regionW = Mathf.Max(1f, rootW * 0.7f - 2f * ui.Sx(6));
+            float cellW = (regionW - (cols - 1) * ui.Sx(4)) / cols;
+            float cellH = Mathf.Max(ui.Sx(22), rootH * 0.16f * 0.42f);
+            grid.cellSize = new Vector2(cellW, cellH);
 
-            var rowRT = (RectTransform)rowGo.transform;
             for (int i = 0; i < kTaskLabels.Length; i++) {
                 int idx = i;
-                var btn = ui.BuildButton(rowRT, kTaskLabels[i], new Color(0.3f, 0.4f, 0.55f), 16,
-                    () => TeleportToTask(idx));
-                var le = btn.GetComponent<LayoutElement>();
-                le.flexibleWidth = 1f;
-                le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
+                ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => TeleportToTask(idx));
             }
         }
 
+        // Bottom-right: log window. Debug only.
         void BuildLogPanel(RectTransform parent) {
-            var panelGo = new GameObject("Log", typeof(RectTransform), typeof(Image));
-            logPanelGo = panelGo;
-            panelGo.transform.SetParent(parent, false);
-            panelGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
-            var panelLe = panelGo.AddComponent<LayoutElement>();
-            panelLe.minHeight = ui.Sx(140); panelLe.preferredHeight = ui.Sx(140);
+            var panel = ui.BuildAnchoredRegion(parent, "Log", new Vector2(0.7f, 0f), new Vector2(1f, 0.16f), ui.Sx(6));
+            logPanelGo = panel.gameObject;
+            panel.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
 
-            logText = ui.BuildLabel((RectTransform)panelGo.transform, "", 12, FontStyles.Normal, new Color(0.9f, 0.9f, 0.9f));
+            logText = ui.BuildLabel(panel, "", 11, FontStyles.Normal, new Color(0.9f, 0.9f, 0.9f));
             logText.enableWordWrapping = false;
+            logText.overflowMode = TextOverflowModes.Truncate;
             QoeUI.StretchToParent((RectTransform)logText.transform);
-            // Inset a bit so the text doesn't kiss the panel edges.
             var rt = (RectTransform)logText.transform;
             rt.offsetMin = new Vector2(ui.Sx(6), ui.Sx(6));
             rt.offsetMax = new Vector2(-ui.Sx(6), -ui.Sx(6));
@@ -398,6 +492,17 @@ namespace QoeDevice {
             ws?.DispatchMessageQueue();
 #endif
             while (mainQ.TryDequeue(out var a)) a();
+            UpdateMicDot();
+        }
+
+        // Mirror the mic state onto the indicator dot. Cheap enough to poll each
+        // frame; only touches the Image when the color actually changes.
+        void UpdateMicDot() {
+            if (micDot == null) return;
+            if (micHandler == null) micHandler = FindObjectOfType<MicrophoneHandler>();
+            bool recording = micHandler != null && micHandler.IsRecording;
+            var want = recording ? kMicRecording : kMicIdle;
+            if (micDot.color != want) micDot.color = want;
         }
 
         async void OnDestroy() {
@@ -543,15 +648,25 @@ namespace QoeDevice {
                 t += Time.deltaTime;
                 int remaining = Mathf.CeilToInt(maxDurationS - t);
                 if (remaining != lastWhole) {
-                    SetHud($"Running '{activeLabel}': {remaining}s");
+                    SetTimer(remaining);                          // top-left, both modes
+                    SetHud($"Running '{activeLabel}': {remaining}s"); // status, debug only
                     lastWhole = remaining;
                 }
                 yield return null;
             }
             QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
+            SetTimer(0);
             TeleportToNeutral();
             yield return PostEndCondition(activeSid);
             runCo = null;
+        }
+
+        // mm:ss countdown for the top-left timer. Kept tiny — the run loop only
+        // calls this when the whole-second value changes.
+        void SetTimer(int remainingS) {
+            if (timerText == null) return;
+            remainingS = Mathf.Max(0, remainingS);
+            timerText.text = $"{remainingS / 60:0}:{remainingS % 60:00}";
         }
 
         public void EndRunEarly() {

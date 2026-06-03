@@ -112,6 +112,20 @@ namespace QoeDevice {
             rt.offsetMax = Vector2.zero;
         }
 
+        // Empty RectTransform anchored to a fractional sub-rect of its parent
+        // (e.g. anchorMin/Max = (0,0.8)..(0.5,1) → top-left fifth). insetPx
+        // (already scaled) shrinks it inward on all sides so neighbouring corner
+        // clusters don't touch. Used to carve the canvas into corner regions.
+        public RectTransform BuildAnchoredRegion(RectTransform parent, string name, Vector2 anchorMin, Vector2 anchorMax, int insetPx = 0) {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = anchorMin; rt.anchorMax = anchorMax;
+            rt.offsetMin = new Vector2(insetPx, insetPx);
+            rt.offsetMax = new Vector2(-insetPx, -insetPx);
+            return rt;
+        }
+
         // Solid-color rectangle button with a centered TMP label and a
         // PressDownButton listener. Caller can post-tweak the LayoutElement
         // (minHeight, flexibleWidth, etc.) on the returned component. The

@@ -58,8 +58,10 @@ namespace QoeDevice {
         [Header("Task teleport")]
         [Tooltip("Player root to teleport.")]
         public Transform playerTransform;
-        [Tooltip("Spawn points by task index: [0]=Training, [1]=Task1, …")]
-        public Transform[] taskSpawnPoints = new Transform[4];
+        [Tooltip("Spawn points by task index. [0]=Training, [1..3]=City friend/clerk/manager, " +
+                 "[4..6]=Hotel receptionist/maintenance/waiter, [7..9]=Museum host/volunteer1/volunteer2. " +
+                 "Assign each scene's Agents/<role>/SpawnPoint in the Inspector.")]
+        public Transform[] taskSpawnPoints = new Transform[10];
         [Tooltip("Where the player goes when a run ends. Defaults to world origin if unassigned.")]
         public Transform neutralPoint;
 
@@ -96,10 +98,17 @@ namespace QoeDevice {
             "Training", "Task 1", "Task 2", "Task 3", "Task 4",
             "Task 5", "Task 6", "Task 7", "Task 8", "Task 9",
         };
-        // Tasks 4–9 have no backend scene yet; empty string skips the refresh.
+        // Backend scene to /refresh per task index. The backend keeps one global
+        // conversation handler keyed by scene name (transition_prompts_<scene>.py),
+        // so this selects which scene's agent1/2/3 prompts + voices answer. The
+        // City scene's backend module is named "Shirts" (transition_prompts_Shirts.py).
+        // Which of agent1/2/3 actually answers is chosen by the proximity
+        // ActivationZone in front of the player, not by this index.
         static readonly string[] kTaskBackendScenes = {
-            "Training", "Hotel", "Hotel", "Hotel", "",
-            "", "", "", "", "",
+            "Training",                  // 0
+            "Shirts", "Shirts", "Shirts",// 1–3 City: friend, clerk, manager
+            "Hotel", "Hotel", "Hotel",   // 4–6 Hotel: receptionist, maintenance, waiter
+            "Museum", "Museum", "Museum",// 7–9 Museum: host, volunteer1, volunteer2
         };
 
         static readonly Color kBlue         = new(0.16f, 0.5f,  0.95f);

@@ -65,6 +65,17 @@ namespace QoeDevice {
         [Tooltip("Where the player goes when a run ends. Defaults to world origin if unassigned.")]
         public Transform neutralPoint;
 
+        [Header("Scene culling (performance)")]
+        [Tooltip("Optional. The four scene roots in QoE_Shell: [0]=Training, [1]=City, " +
+                 "[2]=Hotel, [3]=Museum. When assigned, only the scene the player is " +
+                 "teleported into stays active; the other three are SetActive(false). " +
+                 "Loading all four at once is ~70M triangles — the subject only ever " +
+                 "occupies one agent area at a time, so this is the cheapest big win. " +
+                 "Leave all four empty to disable culling (no behaviour change).")]
+        public GameObject[] sceneRoots = new GameObject[4];
+        // Maps task index → sceneRoots index: 0=Training, 1-3=City, 4-6=Hotel, 7-9=Museum.
+        static readonly int[] kTaskSceneRoot = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3 };
+
         [Header("Screen fade (VR comfort)")]
         [Tooltip("Auto-created on this GameObject if left null.")]
         public ScreenFader fader;
@@ -621,12 +632,32 @@ namespace QoeDevice {
                 SetHud($"spawn point for index {taskIndex} not set");
                 return;
             }
+            ActivateOnlySceneFor(taskIndex);
             var spawn = taskSpawnPoints[taskIndex];
             playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
             string backendScene = kTaskBackendScenes[taskIndex];
             ServerInterface.RefreshScene(backendScene);
             QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
             SetHud($"Teleported to {kTaskLabels[taskIndex]}");
+        }
+
+        // Performance: keep only the scene root the player is entering active.
+        // No-op unless sceneRoots is assigned in the Inspector. Disabling the
+        // other three roots drops their renderers (and the ~70M-triangle total)
+        // from the frame. The agent pipeline is unaffected — the active scene's
+        // ActivationZone is what selects which agent prompt/voice answers.
+        void ActivateOnlySceneFor(int taskIndex) {
+            if (sceneRoots == null) return;
+            int want = (taskIndex >= 0 && taskIndex < kTaskSceneRoot.Length) ? kTaskSceneRoot[taskIndex] : -1;
+            bool anyAssigned = false;
+            for (int i = 0; i < sceneRoots.Length; i++) {
+                if (sceneRoots[i] == null) continue;
+                anyAssigned = true;
+                bool on = i == want;
+                if (sceneRoots[i].activeSelf != on) sceneRoots[i].SetActive(on);
+            }
+            if (anyAssigned && want >= 0)
+                QoeLog.Event("perf", $"scene root {want} active; others culled");
         }
 
         void TeleportToNeutral() {

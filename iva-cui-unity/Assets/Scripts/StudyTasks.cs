@@ -71,6 +71,17 @@ public class StudyTasks : MonoBehaviour
             yield break;
         }
 
+        // QoE thesis: standalone timed conversations have no quest to advance, and
+        // in the merged QoE_Shell scene GetUserStudyScene() can't tell City/Museum
+        // apart (it falls back to Hotel), so the per-scene HandleLLMDeterminedTask
+        // would throw NotImplementedException on a City/Museum transition string.
+        // Ignore the LLM transition entirely; the agent just keeps talking until
+        // the run timer ends.
+        if (StudyControls.oneOffConversations)
+        {
+            yield break;
+        }
+
         yield return new WaitUntil(() => agentFinishedTalking);
 
         string taskText = "";
@@ -191,7 +202,13 @@ public class StudyTasks : MonoBehaviour
             slot.gameObject.SetActive(false);
         }
 
-        Invoke(nameof(InitializeFirstTask), .5f);
+        // One-off conversations have no quest to seed (and InitializeFirstTask
+        // would call the Hotel controller's path/inventory setup at startup, since
+        // GetUserStudyScene() resolves to Hotel in the merged scene). Skip it.
+        if (!StudyControls.oneOffConversations)
+        {
+            Invoke(nameof(InitializeFirstTask), .5f);
+        }
     }
 
     public static void AddItemToInventory(InventoryItem item)

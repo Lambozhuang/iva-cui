@@ -29,6 +29,15 @@ public class StudyControls : MonoBehaviour
 
     public static bool someoneIsThinking = false;
 
+    // QoE thesis: conversations are standalone, timed one-offs (no linear quest).
+    // When true, the LLM "transition" signal is ignored — no path arrows, no
+    // inventory changes, no survey pop-ups, no scene-progression. This is what
+    // lets City/Museum agents run in the merged QoE_Shell scene: the old
+    // per-scene HandleLLMDeterminedTask paths assume GetUserStudyScene() resolves
+    // to the visited scene, but in one merged scene it can't, so they'd throw
+    // NotImplementedException on every turn. Leave true for the study.
+    public static bool oneOffConversations = true;
+
     private LLMAgents.AgentType speakingToThisAgent = LLMAgents.AgentType.Agent1;
 
     public static StudyControls instance;

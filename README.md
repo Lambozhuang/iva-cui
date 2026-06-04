@@ -17,34 +17,39 @@
 > The lists below track outstanding work and what's already been done in this adaptation.
 
 TODOs
-- [ ] IMPORTANT: Remove the artificial delay, and use the same filler for all agents
-- [ ] IMPORTANT: Add museum and city scenes
-- [ ] Depending on the task, we should determine if we end the condition based on if the task is finished or not, or if we let the timer run out, so basically check if we can reuse the original conversation end logic to check if the task is finished
+- [x] IMPORTANT: Remove the artificial delay (done — `AgentSelectionController` + `TrainingSceneController` now play responses immediately; only real network delay is present). *Still open:* "use the same filler for all agents" — filler clips are still per-agent (`agent1/2/3AudioClips`), and filler only plays under `WaitIndicatorType.Natural/Artificial` which the QoE study leaves at `None`.
+- [x] IMPORTANT: Add museum and city scenes (City + Museum roots are merged into `QoE_Shell`; `kTaskBackendScenes`/`taskSpawnPoints` extended to all 10 task indices).
+- [ ] Depending on the task, we should determine if we end the condition based on if the task is finished or not, or if we let the timer run out, so basically check if we can reuse the original conversation end logic to check if the task is finished. *(Note: for one-off conversations the transition/"task finished" signal is now ignored — `StudyControls.oneOffConversations`. Re-enabling task-finished detection would mean re-wiring the per-scene transition handlers.)*
 - [ ] Replace the mic indicator icon from Rec to mic
 - [ ] Figure out how to present a pre-convo prompt for the test subject for each agent to have a bit of context. and we should probably pause? or disable convo before they read the context and press a button to start.
 
 ### QoE adaptation — deferred (do in separate commits)
 
 **Blockers / correctness**
-- [ ] **Add `QoE_Shell` to Build Settings (as scene 0).** Currently only `Hotel_Scene` is in the build list, so a Quest build would boot into the wrong scene. (In-editor "play from open scene" is unaffected.)
-- [ ] **Stuck-mic on network failure.** `someoneIsThinking` (Hotel, `StudyControls`) and `isThinking` (Training, `TrainingSceneController`) are only reset on the success path. Any ASR/TTS/download failure leaves the mic permanently blocked with no timeout — high relevance under netem loss/delay. Add a timeout/error reset.
+- [x] **`QoE_Shell` is in Build Settings as scene 0** (verified via MCP: active scene `QoE_Shell`, buildIndex 0).
+- [x] **Stuck-mic on network failure.** Both pipelines now self-recover: `TrainingSceneController` already had a 30s `ThinkingTimeout`; added a matching timeout to `StudyControls` (zone pipeline) that resets `someoneIsThinking` + the agent's thinking indicator if no response arrives.
 
 **Routing / multi-scene (needed before all 9 conversations work)**
-- [ ] **Scene-name routing is hardwired to Hotel.** With everything in one `QoE_Shell` scene, `StudyControls.DetermineUserStudySceneName()` can't distinguish City/Hotel/Museum and falls back to the serialized `userStudyScene` (Hotel). The teleport path now refreshes the right backend scene per task (`kTaskBackendScenes`), but `StudyControls`'s own scene notion is still Hotel-only — revisit when City/Museum agents are added. `HotelSceneController.HandleLLMDeterminedTask` throws `NotImplementedException` if a non-Hotel transition string arrives.
-- [ ] **Extend `kTaskBackendScenes` / `taskSpawnPoints` for the City + Museum agents** once those scenes are merged in (currently 4 entries: Training + 3 Hotel). `task_number` already routes by index.
+- [x] **Scene-name routing no longer crashes on City/Museum.** `StudyControls.DetermineUserStudySceneName()` still can't distinguish the merged scenes (falls back to Hotel), but the `NotImplementedException` path is now dead: `StudyControls.oneOffConversations` makes `StudyTasks.HandleLLMDeterminedTask` ignore the LLM transition entirely, so `HotelSceneController.HandleLLMDeterminedTask` is never reached with a foreign transition string. Backend scene/prompt/voice routing is correct via `kTaskBackendScenes` + the per-agent proximity `ActivationZone`.
+- [x] **Extended `kTaskBackendScenes` / `taskSpawnPoints` to all 10 task indices** (Training + 3 City + 3 Hotel + 3 Museum). `task_number` routes by index; City uses backend scene name `Shirts`.
 
 **Prompts / conversation design (one-off conversations)**
 - [ ] **Rewrite the agent system prompts for self-contained, one-off conversations** instead of a continuous linear quest. Each agent visit should stand alone with no dependency on prior agents/tasks. Prompt files: `iva-cui-backend/python_middleware/transition_prompts_<scene>.py`. (Backend `/refresh/{scene}/` already wipes all conversation history and reseeds the system prompt — see `app.py:125` / `conversation_handler.py`, so each refresh = a clean conversation. This is the desired behavior; the prompts just need to match the one-off framing and drop the quest-transition logic.)
 - [ ] Decide whether per-agent refresh is needed. Currently `/refresh/Hotel/` rebuilds ALL three Hotel agents (resets the other two as well as the one being visited). Fine for one-off conversations, but means you can't teleport away and back mid-conversation without losing it.
 
 **On-device (Quest) logging**
-- [ ] **`SceneProfiling` / `ConversationLogger` write to `streamingAssetsPath`**, which is read-only inside the APK on Android — `File.Write/Append` will throw on-device. Move logs to `Application.persistentDataPath` for Quest builds.
+- [x] **Logs moved to `Application.persistentDataPath`** (`SceneProfiling`, `ConversationLogger`, `CollectInVRSurvey`) so on-device `File.Write/Append` won't throw.
 
 **Polish**
 - [ ] Wire `controllerMicButton` on `TrainingSceneController` (currently NULL → Training mic responds to the M key only, not the Quest trigger).
 - [ ] Disable rig gravity / `CharacterController` around teleport so the player can't drift/fall after a teleport before pressing R.
 
 ### QoE adaptation — done
+- **All 9 agents + Training reachable in one scene.** City + Museum roots merged into `QoE_Shell` alongside Training + Hotel; `QoeDeviceClient.taskSpawnPoints`/`kTaskBackendScenes` cover task indices 0–9 (Training, City friend/clerk/manager → backend `Shirts`, Hotel receptionist/maintenance/waiter, Museum host/volunteer1/volunteer2). **Editor step:** assign the 10 spawn points (each scene's `Agents/<role>/SpawnPoint`) to `taskSpawnPoints` on `QoeDeviceClient` in order.
+- **One-off conversations.** `StudyControls.oneOffConversations` (default true) disables all quest progression (path arrows, inventory, surveys, LLM transition handling, initial task seeding). The old quest/survey UI scripts are now null-safe / early-out so the task UI canvas, hand-tracked UI, inventory, and in-world surveys can be deleted from `QoE_Shell` without runtime NREs.
+- **No artificial response delay** — only real network delay is measured (the CUI'25 synthetic delay distribution is removed from both pipelines).
+- **Training agent uses the configured backend host** instead of hardcoded `127.0.0.1:8000` (`ServerInterface.MiddlewareBaseUrl`), so it works on the netem split-machine topology.
+- **Optional scene-root culling for performance** (`QoeDeviceClient.sceneRoots`): when assigned, each teleport keeps only the target scene root active and disables the other three (~70M tris → one scene's worth). No-op until assigned. See `PERFORMANCE.md` for the full optimization checklist (also: drop Quality from Ultra→Medium/Low).
 - Merged Training + Hotel into a single `QoE_Shell` scene with 4 spawn points; task switching = teleport the XR rig (`QoeDeviceClient.TeleportToTask`), no scene loading on the critical path.
 - Consolidated all shared controllers onto one root `Scene Control` GameObject (mic, server, study, logger, agent selection); removed the per-scene duplicates.
 - Training mic gated by proximity to the robot head; `StudyControls` mirror-guards so the two mic pipelines don't double-fire.

@@ -13,6 +13,10 @@ namespace LLMAgents
     {
         public static AgentSelectionController instance;
 
+        [Tooltip("Auto-populated at startup from every ActivationZone in the scene " +
+                 "(including currently-inactive ones under culled scene roots). The " +
+                 "Inspector list is ignored — leave it empty. This is what keeps all 9 " +
+                 "agents across all merged scenes registered without hand-maintaining a list.")]
         public List<ActivationZone> zones;
 
         public List<AudioClip> agent1AudioClips;
@@ -28,6 +32,17 @@ namespace LLMAgents
         private void Awake()
         {
             instance = this;
+
+            // Auto-discover every ActivationZone in the scene rather than relying on
+            // a hand-maintained Inspector list. The merged QoE_Shell has 9 zones
+            // (3 per scene); a manually-assigned list silently broke when scene
+            // objects were added/removed (e.g. only Hotel's 3 were registered, so
+            // City/Museum agents couldn't hear the player). Include inactive zones
+            // so the three scene roots that scene-culling disables are still in the
+            // list — Update() re-checks isActiveAndEnabled each frame anyway.
+            var found = FindObjectsByType<ActivationZone>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            zones = new List<ActivationZone>(found);
+            Debug.Log($"AgentSelectionController: auto-registered {zones.Count} ActivationZone(s).");
         }
 
         // Proximity-based zone activation. The player teleports in front of an

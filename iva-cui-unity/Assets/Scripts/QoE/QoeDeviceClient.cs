@@ -169,7 +169,7 @@ namespace QoeDevice {
         // "things to talk about". One string per task; lines are split on '|'.
         static readonly string[] kTaskTalkingPoints = {
             // 0 Training
-            "How do I talk to you?|How am I finding the environment",
+            "How Alfred is doing|What this place is|What to expect in the study",
             // 1–3 City (Shirts)
             "How they've been lately|Tell them something going on with you|Make plans to hang out",
             "What the store sells|Returning or exchanging an item|Ask for a recommendation",

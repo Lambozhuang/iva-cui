@@ -18,8 +18,8 @@ public class TrainingSceneController : MonoBehaviour
     [SerializeField] private Text transcriptionTextUI;
     [SerializeField] private GameObject endOfSceneObject;
 
-    [SerializeField] private float delayResponseBy = 4.25f;
-    [SerializeField] private float stdevDelayResponseBy = 0.2f;
+    // Artificial response delay removed for the QoE thesis (only real network
+    // delay is measured). timeStamp_UserFinishedInput is kept for logging.
     private float timeStamp_UserFinishedInput = 0.0f;
 
     private static List<string> taskStringsForDisplay = new List<string>();
@@ -330,21 +330,9 @@ public class TrainingSceneController : MonoBehaviour
             {
                 AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
 
-                // target delay duration is delayResponseBy +-stdevDelayResponseBy (stdev of 0.2 seconds)
-                float targetDelayDuration = GetNormalRandom(delayResponseBy, stdevDelayResponseBy);
-                float timeSinceUserInput = Time.time - timeStamp_UserFinishedInput;
-                float remainingDelay = targetDelayDuration - timeSinceUserInput;
-
-                if (remainingDelay > 0f)
-                {
-                    Debug.Log($"Target delay: {targetDelayDuration}. Remaining delay: {remainingDelay}.");
-                    yield return new WaitForSeconds(remainingDelay);
-                }
-                else
-                {
-                    Debug.LogWarning($"Target delay: {targetDelayDuration}. DELAY WAS NEGATIVE ({remainingDelay}) -> RESPONSE WAS LATE");
-                }
-
+                // QoE thesis: no artificial response delay (see AgentSelectionController).
+                // The Training agent plays as soon as its audio downloads; only real
+                // network delay is present.
                 botAudioSource.clip = clip;
                 botAudioSource.Play();
                 ResetThinking();

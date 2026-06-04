@@ -76,29 +76,14 @@ namespace LLMAgents
             {
                 if (zone.GetZoneAgentType() == agentType)
                 {
-                    // Get the delay duration for the agent -- from instance of StudyControls
-                    var timeAsOfMicInputEnd = SceneProfiling.speakEnd;
-                    var timeNow = Time.time;
-                    var targetDelayDurationInDistribution = TrainingSceneController.GetNormalRandom(StudyControls.delayDurations[StudyControls.instance.delayDuration], 0.23f);
-
-                    var remainingDelay = targetDelayDurationInDistribution - (timeNow - timeAsOfMicInputEnd);
-
-                    Debug.Log($"Target delay: {targetDelayDurationInDistribution}.");
-
-                    if (remainingDelay < 0)
-                    {
-                        Debug.LogWarning($"Target delay: {targetDelayDurationInDistribution}. DELAY WAS NEGATIVE ({remainingDelay}) -> RESPONSE WAS LATE");
-                        remainingDelay = 0;
-                    }
-
-                    // But if the delay condition is "One", remove all delay since existing delay already follows the wanted distribution
-                    if (StudyControls.instance.delayDuration == StudyControls.DelayDuration.One)
-                    {
-                        remainingDelay = 0.0f;
-                    }
-
-                    instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, remainingDelay));
-                    instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length + remainingDelay, agentType, speechResponse));
+                    // QoE thesis: NO artificial response delay. The CUI'25 paper
+                    // injected a synthetic delay distribution here as its
+                    // manipulation; this thesis measures the *real* delay caused by
+                    // network impairment (netem), so any added delay would corrupt
+                    // the dependent variable. Play the response the instant the
+                    // audio has arrived.
+                    instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, 0f));
+                    instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length, agentType, speechResponse));
                     return;
                 }
             }

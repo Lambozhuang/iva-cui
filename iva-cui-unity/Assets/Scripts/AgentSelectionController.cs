@@ -46,11 +46,17 @@ namespace LLMAgents
 
             Vector3 camPos = cam.transform.position;
 
+            // Only consider zones whose GameObject is active. Scene-root culling
+            // (QoeDeviceClient.sceneRoots) disables the three scenes the player
+            // isn't in, and calling SetPlayerInZone on an inactive zone would try
+            // to StartCoroutine on an inactive GameObject (Unity error). agentType
+            // is NOT unique — each scene has an Agent1/2/3 — so skipping inactive
+            // zones is also what keeps the nearest match in the current scene.
             ActivationZone nearest = null;
             float nearestDist = activationRange;
             foreach (ActivationZone zone in zones)
             {
-                if (zone == null)
+                if (zone == null || !zone.isActiveAndEnabled)
                     continue;
                 float dist = Vector3.Distance(camPos, zone.GetProximityPoint());
                 if (dist <= nearestDist)
@@ -64,7 +70,7 @@ namespace LLMAgents
             // else is out. SetPlayerInZone no-ops when state is unchanged.
             foreach (ActivationZone zone in zones)
             {
-                if (zone == null)
+                if (zone == null || !zone.isActiveAndEnabled)
                     continue;
                 zone.SetPlayerInZone(zone == nearest);
             }
@@ -72,21 +78,39 @@ namespace LLMAgents
 
         public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, ServerInterface.SpeechResponse speechResponse)
         {
-            foreach (ActivationZone zone in instance.zones)
+            // Play on the zone the player is actually standing in, not the first
+            // zone in the list that matches agentType. agentType is NOT unique:
+            // each merged scene (City/Hotel/Museum) has an Agent1/2/3, so a
+            // type-only match always resolved to the first scene's zone (Hotel),
+            // which scene-culling disables when the player is elsewhere — hence the
+            // "Can not play a disabled audio source" error in City/Museum.
+            ActivationZone zone = currentZone;
+            if (zone == null || zone.GetZoneAgentType() != agentType)
             {
-                if (zone.GetZoneAgentType() == agentType)
+                // Fallback: nearest active zone of this type (e.g. if the player
+                // stepped out of range between speaking and the reply arriving).
+                foreach (ActivationZone z in instance.zones)
                 {
-                    // QoE thesis: NO artificial response delay. The CUI'25 paper
-                    // injected a synthetic delay distribution here as its
-                    // manipulation; this thesis measures the *real* delay caused by
-                    // network impairment (netem), so any added delay would corrupt
-                    // the dependent variable. Play the response the instant the
-                    // audio has arrived.
-                    instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, 0f));
-                    instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length, agentType, speechResponse));
-                    return;
+                    if (z != null && z.isActiveAndEnabled && z.GetZoneAgentType() == agentType)
+                    {
+                        zone = z;
+                        break;
+                    }
                 }
             }
+            if (zone == null)
+            {
+                Debug.LogWarning($"PlayAudioForAgent: no active zone for {agentType} — dropping response audio.");
+                return;
+            }
+
+            // QoE thesis: NO artificial response delay. The CUI'25 paper injected a
+            // synthetic delay distribution here as its manipulation; this thesis
+            // measures the *real* delay caused by network impairment (netem), so any
+            // added delay would corrupt the dependent variable. Play the response
+            // the instant the audio has arrived.
+            instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, 0f));
+            instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length, agentType, speechResponse));
         }
 
         private IEnumerator PlayAgentResponseAfterDelay(ActivationZone zone, AudioClip audioClip, float remainingDelay)

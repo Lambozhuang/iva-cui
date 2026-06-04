@@ -30,7 +30,6 @@ namespace QoeDevice {
     public enum DevicePhase { Idle, LoadingTask, TaskReceived, RunningTask }
 
     public class QoeDeviceClient : MonoBehaviour {
-        // ── Inspector config ─────────────────────────────────────────────
         [Header("Server")]
         public string serverHost = "192.168.1.50";
         public int serverPort = 8080;
@@ -40,61 +39,49 @@ namespace QoeDevice {
         public string deviceName = "Quest 3 (Unity)";
 
         [Header("UI")]
-        [Tooltip("Empty RectTransform under a Canvas. HUD label + controls row + log panel + rating section are all built inside it at runtime.")]
+        [Tooltip("Empty RectTransform under a Canvas. UI is built here at runtime.")]
         public RectTransform rootContainer;
-
-        [Tooltip("If true, attach LazyCameraFollow to the canvas so it hovers in front of the player camera.")]
         public bool followCamera = true;
-        [Tooltip("Distance (m) the canvas sits in front of the camera when followCamera is on.")]
         public float followDistance = 1.0f;
-        [Tooltip("Camera tracked when followCamera is on. Falls back to Camera.main if null.")]
         public Transform followCameraTarget;
 
         [Header("Rating client (optional)")]
-        // Leave null to disable on-headset ratings entirely. When set, its WS is
-        // opened after each /end-condition reconnect and closed on Send Ready,
-        // and its UI is built inside our rootContainer below the log panel.
         public QoeRatingClient ratingClient;
 
         [Header("Debug")]
-        [Tooltip("When on, renders the log panel and the rating section's 'Debug preview' button. Turn off for subject-facing builds.")]
+        [Tooltip("Shows log panel, task grid, and Preview rating button. Off for subject-facing builds.")]
         public bool debugMode = true;
 
         [Header("Log panel")]
         public int logMaxLines = 12;
 
         [Header("Task teleport")]
-        [Tooltip("Player root to teleport — whichever of 'XR Interaction Setup' or 'WASD Player' is active in the scene.")]
+        [Tooltip("Player root to teleport.")]
         public Transform playerTransform;
-        [Tooltip("Spawn points indexed by task: [0]=Training (task_number null), [1]=Task 1, [2]=Task 2, [3]=Task 3. Assign in the inspector. start_task's task_number maps directly to this index (null→0).")]
+        [Tooltip("Spawn points by task index: [0]=Training, [1]=Task1, …")]
         public Transform[] taskSpawnPoints = new Transform[4];
-        [Tooltip("Where the player is sent when a run ends (timer expires, End Run, or abandon) to remove the stimuli — i.e. move them away from the agent during the rating/break phase. If unassigned, defaults to world origin (0,0,0).")]
+        [Tooltip("Where the player goes when a run ends. Defaults to world origin if unassigned.")]
         public Transform neutralPoint;
 
         [Header("Screen fade (VR comfort)")]
-        [Tooltip("Fades the view to black before a teleport so the headset compositor reprojects black during the swap. Auto-created on this GameObject if left null.")]
+        [Tooltip("Auto-created on this GameObject if left null.")]
         public ScreenFader fader;
-        [Tooltip("Seconds for each fade-out / fade-in. ~0.3 is comfortable.")]
         public float fadeDuration = 0.3f;
 
         string HttpBase    => $"http://{serverHost}:{serverPort}";
         string WsDeviceUrl => $"ws://{serverHost}:{serverPort}/device";
 
-        // ── Runtime state ────────────────────────────────────────────────
         WebSocket ws;
         bool wsClosedByUs;
         bool isConnecting;
         DevicePhase phase = DevicePhase.Idle;
-
         bool IsWsOpen => ws != null && ws.State == WebSocketState.Open;
 
         string activeSid;
         int activeRunId;
         string activeLabel;
         int maxDurationS;
-        // Spawn index for the current run, resolved from start_task's task_number
-        // (null/training → 0, N → N). Used by SendReadyManual to teleport.
-        int activeTaskIndex;
+        int activeTaskIndex; // null/training → 0, task_number N → N
         Coroutine runCo;
         Coroutine connectTimeoutCo;
         const float ConnectTimeoutS = 10f;
@@ -102,59 +89,44 @@ namespace QoeDevice {
         readonly Queue<string> logLines = new();
         readonly ConcurrentQueue<Action> mainQ = new();
 
-        // Code-built UI. References saved here for runtime updates and for
-        // per-phase / per-mode visibility toggling (see UpdateUiVisibility).
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton;
-        // Training + Task 1–9 (the eventual 3 scenes × 3 agents). Only the first
-        // few have spawn points / backend scenes wired today; the rest render as
-        // debug buttons but TeleportToTask no-ops on them until they're assigned.
+
         static readonly string[] kTaskLabels = {
             "Training", "Task 1", "Task 2", "Task 3", "Task 4",
             "Task 5", "Task 6", "Task 7", "Task 8", "Task 9",
         };
-        // Backend conversation scene to refresh per task (index matches kTaskLabels
-        // / taskSpawnPoints). The backend keeps ONE global handler keyed by scene,
-        // so we must refresh the right scene when teleporting or agent1/2/3 resolve
-        // to the wrong scene's prompt + voice. Tasks 1–3 are Hotel agents; 4–9 are
-        // unassigned (empty → no refresh) until City/Museum are merged in.
+        // Tasks 4–9 have no backend scene yet; empty string skips the refresh.
         static readonly string[] kTaskBackendScenes = {
             "Training", "Hotel", "Hotel", "Hotel", "",
             "", "", "", "", "",
         };
 
-        // Palette (shared by controls + task grid + mic dot).
-        static readonly Color kBlue  = new(0.16f, 0.5f,  0.95f);
-        static readonly Color kGray  = new(0.55f, 0.55f, 0.6f);
-        static readonly Color kGreen = new(0.2f,  0.7f,  0.35f);
-        static readonly Color kRed   = new(0.8f,  0.35f, 0.25f);
-        static readonly Color kTaskBtn = new(0.3f, 0.4f, 0.55f);
-        static readonly Color kPreview = new(0.45f, 0.45f, 0.5f);
-        static readonly Color kMicRecording = new(0.9f, 0.2f, 0.2f);
+        static readonly Color kBlue         = new(0.16f, 0.5f,  0.95f);
+        static readonly Color kGray         = new(0.55f, 0.55f, 0.6f);
+        static readonly Color kGreen        = new(0.2f,  0.7f,  0.35f);
+        static readonly Color kRed          = new(0.8f,  0.35f, 0.25f);
+        static readonly Color kTaskBtn      = new(0.3f,  0.4f,  0.55f);
+        static readonly Color kPreview      = new(0.45f, 0.45f, 0.5f);
+        static readonly Color kMicRecording = new(0.9f,  0.2f,  0.2f);
         static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
 
-        TMP_Text logText;          // debug-only log (bottom-right)
-        TMP_Text timerText;        // task countdown (top-left)
-        Image    micDot;           // recording light, left of the timer
-        TMP_Text micLabel;         // "REC" caption beside the dot while recording
-        // Single status line, top-right above the controls, in BOTH modes:
-        // verbose operator detail in debug (fed by SetHud), minimal
-        // Connected/Connecting/Disconnected in non-debug (RefreshConnStatus).
+        TMP_Text logText;
+        TMP_Text timerText;
+        Image    micDot;
+        TMP_Text micLabel;
         TMP_Text connStatusText;
-        TMP_Text errorText;        // center error banner (non-debug)
-        GameObject topLeftGo;      // timer + mic cluster
-        GameObject controlsGo;     // connect/disconnect/ready/end cluster (top-right)
-        GameObject taskGridGo;     // Training + Task 1–9 grid (bottom, debug only)
-        GameObject logPanelGo;     // log window (bottom-right, debug only)
-        GameObject connStatusGo;   // connection-status line (top-right, both modes)
-        GameObject errorGo;        // center error banner (non-debug only)
-        RectTransform centerRegion;// rating UI + (later) pre-convo prompt
+        TMP_Text errorText;
+        GameObject topLeftGo;
+        GameObject controlsGo;
+        GameObject taskGridGo;
+        GameObject logPanelGo;
+        GameObject connStatusGo;
+        GameObject errorGo;
+        RectTransform centerRegion;
         MicrophoneHandler micHandler;
-        // Friendly, short connection-error message for the subject-facing UI.
-        // Empty = no error. The verbose detail still goes to the debug log.
         string lastError = "";
 
-        // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
         void OnDisable() { Application.logMessageReceived -= OnUnityLog; }
 
@@ -166,35 +138,11 @@ namespace QoeDevice {
             UpdateButtonStates();
         }
 
-        // The fade quad parents itself to the active camera at fade time, so the
-        // fader can live on this (persistent shell) GameObject regardless of
-        // which rig owns the view. Auto-created so no inspector wiring is needed.
         void EnsureFader() {
             if (fader == null) fader = GetComponent<ScreenFader>();
             if (fader == null) fader = gameObject.AddComponent<ScreenFader>();
         }
 
-        // ── UI ───────────────────────────────────────────────────────────
-        // Builds a corner-anchored HUD inside rootContainer (stretched to fill
-        // the canvas). Regions are placed by fractional anchors so they scale
-        // with the canvas. Layout (debug mode shows all of it):
-        //
-        //   ┌ TL: mic+timer ──────────────┬ TR: status line ┐
-        //   │                             │  Connect        │
-        //   │        CENTER               │  Disconnect     │
-        //   │   (rating / pre-convo prompt)│  Ready         │
-        //   │                             │  End Run        │
-        //   ├ task grid (Training, 1–9) ──┴─── log window ──┤
-        //   └─────────────────────────────────────────────┘
-        //
-        // The connection-status line lives in the top-right corner ABOVE the
-        // control buttons in BOTH modes — verbose operator detail in debug,
-        // minimal Connected/Connecting/Disconnected for the subject otherwise.
-        //
-        // Non-debug mode strips the rest to the essentials: mic+timer (during a
-        // task), the single relevant control button top-right (Connect / Ready /
-        // End, shown only when its action is valid), and the center rating form.
-        // No log, no task grid, no titles/labels.
         void BuildUi() {
             if (rootContainer == null) {
                 QoeLog.Err("ui", "rootContainer not assigned — cannot build device UI");
@@ -204,14 +152,10 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            // Earlier builds (and edit-mode previews) stacked children with a
-            // VerticalLayoutGroup on the root; the corner layout positions its
-            // own children, so any inherited layout driver must go.
             StripComponent<VerticalLayoutGroup>(rootContainer.gameObject);
             StripComponent<HorizontalLayoutGroup>(rootContainer.gameObject);
             StripComponent<ContentSizeFitter>(rootContainer.gameObject);
 
-            // Fill the canvas so fractional anchors map to the full panel.
             rootContainer.anchorMin = Vector2.zero; rootContainer.anchorMax = Vector2.one;
             rootContainer.offsetMin = Vector2.zero; rootContainer.offsetMax = Vector2.zero;
 
@@ -220,11 +164,11 @@ namespace QoeDevice {
             float rootH = rootContainer.rect.height;
             ui.scale = rootW > 0 ? Mathf.Clamp(rootW / 600f, 0.05f, 4f) : 1f;
 
-            BuildTopLeftCluster(rootContainer);   // mic light + timer
-            BuildConnStatus(rootContainer);       // status line (top-right, both modes)
-            BuildControlsCluster(rootContainer);  // connect/disconnect/ready/end
-            BuildCenterRegion(rootContainer);     // rating + (later) prompt
-            BuildErrorBanner(rootContainer);      // center error text (non-debug)
+            BuildTopLeftCluster(rootContainer);
+            BuildConnStatus(rootContainer);
+            BuildControlsCluster(rootContainer);
+            BuildCenterRegion(rootContainer);
+            BuildErrorBanner(rootContainer);
             if (debugMode) BuildTaskGrid(rootContainer, rootW, rootH);
             if (debugMode) BuildLogPanel(rootContainer);
 
@@ -239,14 +183,6 @@ namespace QoeDevice {
             UpdateUiVisibility();
         }
 
-        // Drives per-region and per-button visibility for the two modes. Called
-        // on every phase change, rating-form toggle, and at build time.
-        //
-        //   debug   → show everything; all four control buttons visible and
-        //             dimmed/enabled per phase (UpdateButtonStates).
-        //   normal  → mic+timer only during a task; exactly one control button
-        //             (the valid one) top-right; center rating form when present;
-        //             no status text, log, or task grid.
         void UpdateUiVisibility() {
             if (rootContainer == null) return;
             rootContainer.gameObject.SetActive(true);
@@ -256,23 +192,16 @@ namespace QoeDevice {
             bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
             bool taskReceived  = phase == DevicePhase.TaskReceived;
 
-            // Timer + mic: meaningful only during a task, in both modes.
-            if (topLeftGo  != null) topLeftGo.SetActive(running);
-            // Log / task grid: debug only.
-            if (logPanelGo != null) logPanelGo.SetActive(debugMode);
-            if (taskGridGo != null) taskGridGo.SetActive(debugMode);
-            // Connection status line (top-right): both modes. Error banner
-            // (center): non-debug only, and only when there's an error to show.
+            if (topLeftGo    != null) topLeftGo.SetActive(running);
+            if (logPanelGo   != null) logPanelGo.SetActive(debugMode);
+            if (taskGridGo   != null) taskGridGo.SetActive(debugMode);
             if (connStatusGo != null) connStatusGo.SetActive(true);
             if (errorGo      != null) errorGo.SetActive(!string.IsNullOrEmpty(lastError));
 
-            // Controls. Debug shows all four (enabled state handled separately);
-            // normal shows only the one button whose action is currently valid,
-            // and hides Disconnect entirely.
-            SetActive(connectButton,    debugMode || (canConnect   && !ratingVisible));
-            SetActive(disconnectButton, debugMode);
-            SetActive(sendReadyButton,  debugMode || (taskReceived && !ratingVisible));
-            SetActive(endRunEarlyButton, debugMode || running);
+            SetActive(connectButton,       debugMode || (canConnect   && !ratingVisible));
+            SetActive(disconnectButton,    debugMode);
+            SetActive(sendReadyButton,     debugMode || (taskReceived && !ratingVisible));
+            SetActive(endRunEarlyButton,   debugMode || running);
             SetActive(previewRatingButton, debugMode);
             if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running);
         }
@@ -287,11 +216,6 @@ namespace QoeDevice {
             if (Application.isPlaying) Destroy(c); else DestroyImmediate(c);
         }
 
-        // Walks up from rootContainer to its Canvas root and attaches a
-        // LazyCameraFollow so the whole HUD hovers in front of the player.
-        // Toggle followCamera off if you want a stationary canvas (e.g. desktop
-        // testing inside a fixed window). Skipped in edit mode so the editor
-        // preview doesn't dirty the scene with a follower component.
         void AttachCanvasFollower() {
             if (!Application.isPlaying || !followCamera || rootContainer == null) return;
             var canvas = rootContainer.GetComponentInParent<Canvas>();
@@ -303,31 +227,17 @@ namespace QoeDevice {
             if (followCameraTarget != null) follow.cam = followCameraTarget;
         }
 
-        // ── Editor helpers (right-click the component header) ────────────
-        // Three previews mirror the three runtime layouts:
-        //   • Controls UI — what the operator sees in Idle/TaskReceived (debug
-        //     adds the log panel; the rating section's status bar follows the
-        //     same flag).
-        //   • Rating UI   — what the subject sees while answering: builds the
-        //     full HUD and populates the rating form with the debug preview,
-        //     then applies subject-facing visibility (controls/HUD hidden).
-        //   • Clear       — empties rootContainer.
         [ContextMenu("Device: build controls UI")]
         void Editor_BuildControlsUi() {
             BuildUi();
-            SetHud("(edit-mode preview)");
             UpdateButtonStates();
         }
 
         [ContextMenu("Device: build rating UI")]
         void Editor_BuildRatingUi() {
             BuildUi();
-            SetHud("(edit-mode preview)");
             UpdateButtonStates();
-            if (ratingClient == null) {
-                QoeLog.Warn("ui", "ratingClient not assigned — cannot preview rating UI");
-                return;
-            }
+            if (ratingClient == null) { QoeLog.Warn("ui", "ratingClient not assigned"); return; }
             ratingClient.LoadDebugPreview();
         }
 
@@ -342,14 +252,8 @@ namespace QoeDevice {
             timerText = null; micDot = null; micLabel = null; centerRegion = null;
         }
 
-        // ── Corner regions ─────────────────────────────────────────────────
-        // Top-left: recording indicator (light + "REC" caption) followed by the
-        // task countdown timer. Shown in BOTH modes, but only while a task is
-        // running (UpdateUiVisibility gates it). This is our own mic indicator —
-        // it replaces the old hand-tracked "mic_active_object" widgets, so we can
-        // delete those without losing the recording cue. The light tracks
-        // MicrophoneHandler.IsRecording (see UpdateMicDot): dim when idle, solid
-        // red with the "REC" caption while the subject is holding to talk.
+        // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
+        // Only visible while a task is running.
         void BuildTopLeftCluster(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0f, 0.84f), new Vector2(0.42f, 1f), ui.Sx(6));
             topLeftGo = region.gameObject;
@@ -359,7 +263,6 @@ namespace QoeDevice {
             hg.childControlWidth = true; hg.childControlHeight = true;
             hg.childAlignment = TextAnchor.MiddleLeft;
 
-            // Recording light — a small square whose color tracks IsRecording.
             var dotGo = new GameObject("MicDot", typeof(RectTransform), typeof(Image));
             dotGo.transform.SetParent(region, false);
             micDot = dotGo.GetComponent<Image>();
@@ -369,8 +272,6 @@ namespace QoeDevice {
             dotLe.minWidth = dot; dotLe.preferredWidth = dot; dotLe.flexibleWidth = 0;
             dotLe.minHeight = dot; dotLe.preferredHeight = dot; dotLe.flexibleHeight = 0;
 
-            // "REC" caption — hidden until recording, then shown next to the light
-            // so the recording state is unmistakable, not just a color shift.
             micLabel = ui.BuildLabel(region, "REC", 13, FontStyles.Bold, kMicRecording, TextAlignmentOptions.Left);
             micLabel.enableWordWrapping = false;
             var mle = micLabel.gameObject.AddComponent<LayoutElement>();
@@ -384,12 +285,7 @@ namespace QoeDevice {
             tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
         }
 
-        // Top-right corner, above the control buttons: the one and only status
-        // line, identical in both modes — a minimal gray Connected / Connecting…
-        // / Disconnected derived from the live socket state (RefreshConnStatus).
-        // The control column starts just below this strip (see
-        // BuildControlsCluster) so the two never collide. Verbose operator detail
-        // is NOT shown here; it goes to the debug log panel instead (SetHud).
+        // Top-right: gray Connected/Connecting…/Disconnected, identical in both modes.
         void BuildConnStatus(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "ConnStatus", new Vector2(0.44f, 0.88f), new Vector2(1f, 1f), ui.Sx(4));
             connStatusGo = region.gameObject;
@@ -399,29 +295,7 @@ namespace QoeDevice {
             QoeUI.StretchToParent((RectTransform)connStatusText.transform);
         }
 
-        // Top-right: the four control buttons stacked vertically, with a
-        // "Preview rating" button below them (debug only). In debug all four
-        // controls are present (enabled/dimmed per phase). In normal mode only
-        // the single valid action is shown (UpdateUiVisibility), so the stack
-        // reads as one button at the top-right.
-        //
-        // The status line owns the very top strip (y≥0.88) in both modes, so the
-        // column starts below it. Debug packs 5 buttons into the band between the
-        // status strip and the log panel; non-debug shows one button in a thin
-        // band just under the status line. Buttons use min + flexible height (not
-        // a fixed pixel height) so they distribute to fill whatever band the mode
-        // gives them — this keeps them fitting at the panel's small effective
-        // scale instead of overflowing into the log or status.
-        //
-        // In non-debug the column's box can clip the top-right corner of the wide
-        // center region, but the two are mutually exclusive in time: the single
-        // action button (Connect/Ready/End) only shows when there's no rating
-        // form up, and the center carries no rating content while a button is
-        // visible — so they never paint over each other.
         void BuildControlsCluster(RectTransform parent) {
-            // Debug: column spans from just under the status strip down to just
-            // above the log panel (log tops out at 0.40). Non-debug: a thin band
-            // under the status line for the single visible action button.
             float topAnchor = debugMode ? 0.42f : 0.72f;
             var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, topAnchor), new Vector2(1f, 0.86f), ui.Sx(4));
             controlsGo = region.gameObject;
@@ -441,9 +315,6 @@ namespace QoeDevice {
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 1f;
             }
 
-            // Preview rating — debug-only helper that loads the rating debug
-            // preview into the center region (moved here from the rating
-            // section's status bar). Sits under the four controls.
             if (debugMode && ratingClient != null) {
                 previewRatingButton = ui.BuildButton(region, "Preview rating", kPreview, 14, ratingClient.LoadDebugPreview);
                 var le = previewRatingButton.GetComponent<LayoutElement>();
@@ -452,13 +323,6 @@ namespace QoeDevice {
             }
         }
 
-        // Center: reserved for the rating form and (later) the pre-conversation
-        // prompt/context. The rating client builds its section inside this rect.
-        // The footprint depends on mode: debug keeps clear of the right control
-        // column and the bottom task-grid/log strip, so it's a narrower box in
-        // the middle-left; non-debug has none of that furniture, so it spreads
-        // across nearly the whole panel (only the slim top band stays reserved
-        // for the timer + the single top-right action button).
         void BuildCenterRegion(RectTransform parent) {
             Vector2 min = debugMode ? new Vector2(0.12f, 0.18f) : new Vector2(0.08f, 0.06f);
             Vector2 max = debugMode ? new Vector2(0.73f, 0.82f) : new Vector2(0.92f, 0.82f);
@@ -470,12 +334,8 @@ namespace QoeDevice {
             vlg.childAlignment = TextAnchor.UpperCenter;
         }
 
-        // Center error banner (non-debug). Sits over the center region and shows
-        // a short, subject-friendly message when the connection fails or drops —
-        // the place a subject would be looking. Hidden when there's no error and
-        // in debug mode (where the verbose hud + log carry the detail). Built as
-        // its own anchored region (not a child of centerRegion) so it doesn't get
-        // swept when the rating client rebuilds the center's contents.
+        // Overlays the center when there's an error; built separately so rating-client
+        // rebuilds of the center don't destroy it.
         void BuildErrorBanner(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "ErrorBanner", new Vector2(0.12f, 0.4f), new Vector2(0.88f, 0.62f), ui.Sx(6));
             errorGo = region.gameObject;
@@ -484,10 +344,6 @@ namespace QoeDevice {
             QoeUI.StretchToParent((RectTransform)errorText.transform);
         }
 
-        // Bottom strip: Training + Task 1–9 teleport buttons as a grid. Debug
-        // only. Each jumps the rig straight to that agent and refreshes the
-        // backend scene — no WS / ready / end-condition. The grid auto-sizes its
-        // cells to fit the panel width across kTaskLabels.Length entries.
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
             const float gridFracW = 0.72f;
             var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(gridFracW, 0.16f), ui.Sx(6));
@@ -498,27 +354,22 @@ namespace QoeDevice {
             grid.startAxis = GridLayoutGroup.Axis.Horizontal;
             grid.childAlignment = TextAnchor.MiddleCenter;
             grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
-            int cols = 5; // 10 task buttons → 5×2 grid
+            int cols = 5;
             grid.constraintCount = cols;
             float regionW = Mathf.Max(1f, rootW * gridFracW - 2f * ui.Sx(6));
             float cellW = (regionW - (cols - 1) * ui.Sx(4)) / cols;
             float cellH = Mathf.Max(ui.Sx(22), rootH * 0.16f * 0.42f);
             grid.cellSize = new Vector2(cellW, cellH);
-
             for (int i = 0; i < kTaskLabels.Length; i++) {
                 int idx = i;
                 ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => TeleportToTask(idx));
             }
         }
 
-        // Right column, below the controls cluster: the log window. Debug only.
-        // It sits in the right-hand strip the center region leaves clear, so it
-        // can run tall (up to the controls) without crowding the rating UI.
         void BuildLogPanel(RectTransform parent) {
             var panel = ui.BuildAnchoredRegion(parent, "Log", new Vector2(0.74f, 0f), new Vector2(1f, 0.4f), ui.Sx(6));
             logPanelGo = panel.gameObject;
             panel.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.35f);
-
             logText = ui.BuildLabel(panel, "", 11, FontStyles.Normal, new Color(0.9f, 0.9f, 0.9f));
             logText.enableWordWrapping = false;
             logText.overflowMode = TextOverflowModes.Truncate;
@@ -529,16 +380,11 @@ namespace QoeDevice {
             rt.offsetMax = new Vector2(-ui.Sx(6), -ui.Sx(6));
         }
 
-        // ── Button actions ────────────────────────────────────────────────
         public void ConnectManual() {
             if (ws != null && (ws.State == WebSocketState.Open || ws.State == WebSocketState.Connecting)) return;
             ClearError();
             SetHud($"Connecting to {WsDeviceUrl}…");
             _ = ConnectWs();
-            // Open the rating WS too. If the operator console issued a
-            // `request_rating` before we joined (mid-session reconnect after a
-            // crash/disconnect), it'll re-fire on rating-WS reconnect and the
-            // pending form lands without operator intervention.
             if (ratingClient != null && !ratingClient.IsOpen) ratingClient.OpenWs(serverHost, serverPort);
         }
 
@@ -556,13 +402,9 @@ namespace QoeDevice {
             StartCoroutine(TeleportThenStart());
         }
 
-        // Per the device contract: teleport to the task_number's spawn (no scene
-        // load), send `ready`, then close the WS and record locally for the run.
         IEnumerator TeleportThenStart() {
             TeleportToTask(activeTaskIndex);
-            // One frame so the rig move + camera-follower retarget settle before
-            // we tell the backend to apply netem and start the clock.
-            yield return null;
+            yield return null; // let rig move + camera-follower settle
             QoeLog.Event("ws", $"sending ready for run {activeRunId}");
             SendJson(new { type = WsType.Ready });
             CloseWsIntentional();
@@ -572,21 +414,13 @@ namespace QoeDevice {
         }
 
         void Update() {
-            // Upstream NativeWebSocket buffers callbacks until the main thread
-            // pumps DispatchMessageQueue; without this, OnOpen/OnMessage/OnClose
-            // never fire on Standalone/Android (the Meta fork dispatches itself).
 #if !UNITY_WEBGL || UNITY_EDITOR
-            ws?.DispatchMessageQueue();
+            ws?.DispatchMessageQueue(); // NativeWebSocket requires manual pump on non-WebGL
 #endif
             while (mainQ.TryDequeue(out var a)) a();
             UpdateMicDot();
         }
 
-        // Mirror the mic state onto our recording indicator — the light turns
-        // solid red and the "REC" caption appears while MicrophoneHandler is
-        // recording, idle gray otherwise. This is the replacement for the old
-        // hand-tracked "mic_active_object" widgets. Cheap enough to poll each
-        // frame; only touches the UI when the state actually changes.
         void UpdateMicDot() {
             if (micDot == null) return;
             if (micHandler == null) micHandler = FindObjectOfType<MicrophoneHandler>();
@@ -611,7 +445,6 @@ namespace QoeDevice {
             if (logText != null) logText.text = string.Join("\n", logLines);
         }
 
-        // ── WS ────────────────────────────────────────────────────────────
         async System.Threading.Tasks.Task ConnectWs() {
             if (ws != null && (ws.State == WebSocketState.Open || ws.State == WebSocketState.Connecting)) return;
             wsClosedByUs = false;
@@ -632,8 +465,6 @@ namespace QoeDevice {
             });
 
             ws.OnMessage += (bytes) => {
-                // Upstream NativeWebSocket (endel) signature: full-buffer byte
-                // array, no offset/length pair like the Meta XR SDK fork.
                 if (bytes == null || bytes.Length == 0) return;
                 var raw = Encoding.UTF8.GetString(bytes);
                 mainQ.Enqueue(() => HandleWsMessage(raw));
@@ -683,8 +514,7 @@ namespace QoeDevice {
             if (ws == null || ws.State != WebSocketState.Open) {
                 QoeLog.Warn("ws", $"SendJson called while WS not open (state={ws?.State})"); return;
             }
-            var json = JsonConvert.SerializeObject(obj);
-            await ws.SendText(json);
+            await ws.SendText(JsonConvert.SerializeObject(obj));
         }
 
         void SendHello() {
@@ -713,7 +543,6 @@ namespace QoeDevice {
             }
         }
 
-        // ── State machine ─────────────────────────────────────────────────
         void OnStartTask(JObject data) {
             if (data == null) { QoeLog.Warn("task", "start_task with null data — ignoring"); return; }
             activeSid    = data["session_id"]?.ToString();
@@ -721,9 +550,7 @@ namespace QoeDevice {
             activeLabel  = data["label"]?.ToString() ?? "?";
             maxDurationS = data["max_condition_duration_s"]?.ToObject<int>() ?? 60;
 
-            // task_number: 1-based experiment task position, or null for training
-            // runs (CONTRACT.md). The task sequence is fixed, so task_number maps
-            // directly to a spawn index: null → 0 (Training), N → N.
+            // task_number is null for training runs, 1-based otherwise.
             int? taskNumber = data["task_number"]?.Type == JTokenType.Null
                 ? (int?)null
                 : data["task_number"]?.ToObject<int?>();
@@ -746,8 +573,8 @@ namespace QoeDevice {
                 t += Time.deltaTime;
                 int remaining = Mathf.CeilToInt(maxDurationS - t);
                 if (remaining != lastWhole) {
-                    SetTimer(remaining);                          // top-left, both modes
-                    SetHud($"Running '{activeLabel}': {remaining}s"); // status, debug only
+                    SetTimer(remaining);
+                    SetHud($"Running '{activeLabel}': {remaining}s");
                     lastWhole = remaining;
                 }
                 yield return null;
@@ -759,8 +586,6 @@ namespace QoeDevice {
             runCo = null;
         }
 
-        // mm:ss countdown for the top-left timer. Kept tiny — the run loop only
-        // calls this when the whole-second value changes.
         void SetTimer(int remainingS) {
             if (timerText == null) return;
             remainingS = Mathf.Max(0, remainingS);
@@ -776,11 +601,6 @@ namespace QoeDevice {
             StartCoroutine(PostEndCondition(activeSid));
         }
 
-        // ── Task teleport ─────────────────────────────────────────────────
-        // Move the player rig to a task's spawn point and switch the backend to
-        // that task's conversation scene. Used by both the debug task buttons
-        // (manual, no networking) and the real WS path (SendReadyManual →
-        // TeleportThenStart). taskIndex 0 = Training, 1–3 = Hotel agents.
         void TeleportToTask(int taskIndex) {
             if (playerTransform == null) {
                 QoeLog.Warn("task", "playerTransform not assigned — cannot teleport");
@@ -794,32 +614,22 @@ namespace QoeDevice {
             }
             var spawn = taskSpawnPoints[taskIndex];
             playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
-
-            // Switch the backend to this task's scene so agent1/2/3 use the right
-            // prompts + voice. Without this the global handler stays on whichever
-            // scene was refreshed last at startup (the Training/Hotel race).
             string backendScene = kTaskBackendScenes[taskIndex];
             ServerInterface.RefreshScene(backendScene);
-
             QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
             SetHud($"Teleported to {kTaskLabels[taskIndex]}");
         }
 
-        // Move the player away from the agent when a run ends, so the stimuli is
-        // removed during the rating/break phase. The proximity system then sees
-        // no agent in range and clears the active zone. Defaults to world origin
-        // when neutralPoint is unassigned.
         void TeleportToNeutral() {
             if (playerTransform == null) {
                 QoeLog.Warn("task", "playerTransform not assigned — cannot teleport to neutral");
                 return;
             }
-            if (neutralPoint != null) {
+            if (neutralPoint != null)
                 playerTransform.SetPositionAndRotation(neutralPoint.position, neutralPoint.rotation);
-            } else {
+            else
                 playerTransform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-            }
-            QoeLog.Event("task", "teleported to neutral point (stimuli removed)");
+            QoeLog.Event("task", "teleported to neutral point");
         }
 
         public void AbandonRun() {
@@ -831,7 +641,6 @@ namespace QoeDevice {
             TransitionPhase(DevicePhase.Idle);
         }
 
-        // ── HTTP ──────────────────────────────────────────────────────────
         IEnumerator PostEndCondition(string sid) {
             var url = $"{HttpBase}/end-condition";
             var body = JsonConvert.SerializeObject(new { sid });
@@ -895,7 +704,6 @@ namespace QoeDevice {
             return req;
         }
 
-        // ── HUD ───────────────────────────────────────────────────────────
         void TransitionPhase(DevicePhase next) {
             if (phase == next) return;
             QoeLog.Event("phase", $"{phase} → {next}");
@@ -914,40 +722,22 @@ namespace QoeDevice {
             RefreshConnStatus();
         }
 
-        // Toggle PressDownButton.interactable. The button dims its own backing
-        // Image when disabled (and applies the hover tint when enabled), so the
-        // disabled state stays visible at a glance without recoloring here.
         static void SetBtn(PressDownButton b, bool enabled) {
             if (b == null) return;
             b.interactable = enabled;
         }
 
-        // Verbose status string. This no longer drives any on-canvas text — the
-        // status line shows only the minimal connection state. The rich detail
-        // still reaches the debug log panel via the QoeLog.* calls at each call
-        // site. Kept as a no-op-ish shim so the many existing call sites don't
-        // need rewriting; it just refreshes the connection-state line.
-        void SetHud(string s) {
-            RefreshConnStatus();
-        }
+        void SetHud(string s) { RefreshConnStatus(); }
 
-        // The single status line, identical in both modes: minimal Connected /
-        // Connecting… / Disconnected derived from the live WS state, so it stays
-        // correct no matter which code path changed things. Never surfaces
-        // internals.
         void RefreshConnStatus() {
             if (connStatusText == null) return;
             string s;
-            if (IsWsOpen)            s = "Connected";
-            else if (isConnecting)   s = "Connecting…";
-            else                     s = "Disconnected";
+            if (IsWsOpen)          s = "Connected";
+            else if (isConnecting) s = "Connecting…";
+            else                   s = "Disconnected";
             connStatusText.text = s;
         }
 
-        // Center error banner (non-debug). Pass a short, subject-friendly line;
-        // empty/null clears it. Toggling it re-runs visibility so the banner
-        // shows/hides. The verbose detail still goes to the debug hud + log via
-        // the QoeLog.* calls at the original error sites.
         void SetError(string msg) {
             lastError = msg ?? "";
             if (errorText != null) errorText.text = lastError;

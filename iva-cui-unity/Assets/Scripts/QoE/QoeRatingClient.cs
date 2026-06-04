@@ -13,32 +13,13 @@ using UnityEngine.Networking;
 using UnityEngine.UI;
 
 namespace QoeDevice {
-    /// <summary>
-    /// On-headset rating client. Mirrors rating-client/src/RatingClientPage.tsx:
-    ///  • opens a WS to /rating-client and sends `hello`
-    ///  • on `request_rating`, builds a UGUI form under <see cref="formContainer"/>
-    ///    matching the four item kinds (radio_scale, slider_scale, matrix, group)
-    ///  • POSTs /ratings on submit, then clears the form
-    ///
-    /// Lifecycle and UI parenting are driven by QoeDeviceClient: it calls
-    /// <see cref="BuildUi"/> with a section RectTransform inside its own canvas
-    /// (Phase B — single merged canvas), <see cref="OpenWs"/> after end-condition
-    /// reconnect, and <see cref="CloseWs"/> when the subject hits Ready.
-    ///
-    /// All sizes (fonts, fixed-label widths, row heights, slider thickness) are
-    /// scaled at build time by parent.rect.width / kReferenceWidth, so a
-    /// narrower canvas shrinks the form rather than overflowing.
-    /// </summary>
     public class QoeRatingClient : MonoBehaviour {
-        // Layout sizes are authored against a 600-wide form. Anything narrower
-        // shrinks proportionally; anything wider scales up.
         const float kReferenceWidth = 600f;
 
         [Header("Identity (sent in hello)")]
         public string deviceKind = "rating-client";
         public string deviceName = "Quest 3 Rating";
 
-        // ── Runtime ──────────────────────────────────────────────────────
         WebSocket ws;
         bool wsClosedByUs;
         readonly ConcurrentQueue<Action> mainQ = new();
@@ -57,52 +38,22 @@ namespace QoeDevice {
         Button submitButton;
         readonly QoeUI ui = new();
 
-        // Built at runtime by BuildUi(parent). Section is the rating client's
-        // own RectTransform inside the merged canvas — clearing/rebuilding the
-        // form swaps children of formContainer without touching device-client UI.
         RectTransform section;
         RectTransform formContainer;
-        // Status display was removed — the device client owns the single status
-        // line. statusText stays null so SetStatus() is a harmless no-op; the
-        // rich messages it received still go to the debug log via QoeLog.
+        // statusText is always null (status bar removed); SetStatus() is a safe no-op.
         TMP_Text statusText;
         bool sectionDebugMode;
 
         public bool IsOpen => ws != null && ws.State == WebSocketState.Open;
 
-        // True while a rating form is rendered inside formContainer (i.e. a
-        // request_rating arrived or a debug preview was loaded). Flipped to
-        // false on ClearForm / submit. QoeDeviceClient subscribes to
-        // OnFormVisibilityChanged to hide its controls while the subject is
-        // answering, so they only see the rating UI.
         public bool IsFormVisible { get; private set; }
         public Action<bool> OnFormVisibilityChanged;
 
-        // QoeDeviceClient drives BuildUi as part of its own UI build, so we
-        // intentionally do nothing in Start. This keeps the rating client a
-        // passive child of the merged canvas.
-
-        // Builds a vertical "rating section" under <paramref name="parent"/>:
-        // a status bar on top and a scrolling form area below. Caller (device
-        // client) wraps this section inside its own VerticalLayoutGroup, so
-        // the section's LayoutElement.flexibleHeight=1 makes the form area
-        // soak up whatever space is left after HUD/controls/log.
-        // <paramref name="debugVisible"/> mirrors QoeDeviceClient.debugMode —
-        // off in subject-facing builds, on while iterating. When on, the section
-        // (status bar + form area) stays visible even with no form up; when off
-        // it appears only while a form is being answered. The debug "Preview
-        // rating" trigger now lives in QoeDeviceClient's controls cluster and
-        // calls LoadDebugPreview directly, so the section no longer builds its
-        // own button.
         public void BuildUi(RectTransform parent, bool debugVisible = true) {
             if (parent == null) {
-                QoeLog.Err("rating", "BuildUi called with null parent — cannot build rating UI");
+                QoeLog.Err("rating", "BuildUi called with null parent");
                 return;
             }
-            // If a previous build exists, nuke it so re-runs don't pile up.
-            // Reset IsFormVisible too — a stale 'true' from a prior preview
-            // would otherwise trick QoeDeviceClient into hiding controls
-            // because it thinks a form is still up.
             if (section != null) {
                 if (Application.isPlaying) Destroy(section.gameObject); else DestroyImmediate(section.gameObject);
                 section = null; formContainer = null; statusText = null;
@@ -124,25 +75,17 @@ namespace QoeDevice {
             var sectionLe = sectionGo.AddComponent<LayoutElement>();
             sectionLe.flexibleHeight = 1f; sectionLe.minHeight = ui.Sx(200);
 
-            // No status bar here — the device client owns the single status line
-            // (top-right). SetStatus() below is a safe no-op (statusText stays
-            // null); the rich messages still reach the debug log via QoeLog.
             BuildFormArea(section);
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(section);
             ApplySectionVisibility();
         }
 
-        // When debug is off, hide the entire rating section until a form
-        // arrives, so subjects only ever see it while answering. With debug on
-        // the section is always visible.
+        // Hidden until a form arrives in non-debug; always visible in debug.
         void ApplySectionVisibility() {
-            bool sectionVisible = sectionDebugMode || IsFormVisible;
-            if (section != null) section.gameObject.SetActive(sectionVisible);
+            if (section != null) section.gameObject.SetActive(sectionDebugMode || IsFormVisible);
         }
 
-        // The form area takes whatever vertical space rootContainer has left.
-        // BuildForm builds its ScrollRect inside this rect at request time.
         void BuildFormArea(RectTransform parent) {
             var go = new GameObject("FormArea", typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -152,9 +95,6 @@ namespace QoeDevice {
         }
 
         void Update() {
-            // Upstream NativeWebSocket buffers callbacks until DispatchMessageQueue
-            // is pumped on the main thread; without this, OnOpen/OnMessage/OnClose
-            // never fire on non-WebGL platforms.
 #if !UNITY_WEBGL || UNITY_EDITOR
             ws?.DispatchMessageQueue();
 #endif
@@ -165,7 +105,6 @@ namespace QoeDevice {
             if (ws != null) { wsClosedByUs = true; await ws.Close(); }
         }
 
-        // ── Public API ───────────────────────────────────────────────────
         public async void OpenWs(string host, int port) {
             if (ws != null && (ws.State == WebSocketState.Open || ws.State == WebSocketState.Connecting)) return;
             serverHost = host;
@@ -181,8 +120,6 @@ namespace QoeDevice {
             });
 
             ws.OnMessage += (bytes) => {
-                // Upstream NativeWebSocket (endel) hands back the full payload
-                // buffer — no offset/length pair like the Meta XR SDK fork.
                 if (bytes == null || bytes.Length == 0) return;
                 var raw = Encoding.UTF8.GetString(bytes);
                 mainQ.Enqueue(() => HandleWsMessage(raw));
@@ -221,11 +158,9 @@ namespace QoeDevice {
             BuildForm(JArray.Parse(DEBUG_PREVIEW_JSON));
         }
 
-        // ── WS handling ──────────────────────────────────────────────────
         async void SendJson(object obj) {
             if (ws == null || ws.State != WebSocketState.Open) return;
-            var json = JsonConvert.SerializeObject(obj);
-            await ws.SendText(json);
+            await ws.SendText(JsonConvert.SerializeObject(obj));
         }
 
         void HandleWsMessage(string raw) {
@@ -248,7 +183,6 @@ namespace QoeDevice {
             BuildForm(items);
         }
 
-        // ── Form lifecycle ───────────────────────────────────────────────
         void ClearForm() {
             answers.Clear();
             leafChecks.Clear();
@@ -279,20 +213,14 @@ namespace QoeDevice {
             float w = formContainer.rect.width;
             ui.scale = w > 0 ? Mathf.Clamp(w / kReferenceWidth, 0.05f, 4f) : 1f;
 
-            // Build a ScrollRect inside formContainer so the form fits the rect
-            // the user sized in the inspector — long forms scroll vertically
-            // instead of overflowing several meters into the scene.
             var content = ui.BuildScrollRect(formContainer);
             SetStatus($"Rate condition: {activeLabel}");
 
-            foreach (var item in items) {
+            foreach (var item in items)
                 RenderItem(item, new List<string>(), content);
-            }
+
             BuildSubmitButton(content);
             UpdateSubmitInteractable();
-
-            // Force a layout pass now so the form is visible immediately —
-            // important for edit-mode previews where there's no Update tick.
             LayoutRebuilder.ForceRebuildLayoutImmediate(formContainer);
             Canvas.ForceUpdateCanvases();
             SetFormVisible(true);
@@ -371,9 +299,8 @@ namespace QoeDevice {
                 btn.onPress = () => {
                     selected = captured;
                     SetAt(path, new Dictionary<string, object> { ["score"] = captured });
-                    for (int j = 0; j < btns.Count; j++) {
+                    for (int j = 0; j < btns.Count; j++)
                         btns[j].SetNormalColor((j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white);
-                    }
                     UpdateSubmitInteractable();
                 };
             }
@@ -399,13 +326,8 @@ namespace QoeDevice {
             var rowLe = row.AddComponent<LayoutElement>();
             rowLe.minHeight = ui.Sx(36);
 
-            // Min/max labels and value readout get fixed pixel widths so the
-            // slider track gets all remaining space. The readout has a fixed
-            // width too — without it, "0"→"100" makes the track shrink as the
-            // user slides, which feels broken.
             if (!string.IsNullOrEmpty(minLabel)) ui.BuildPxLabel((RectTransform)row.transform, minLabel, ui.Sx(70), TextAlignmentOptions.Right, 12);
 
-            // Slider track (background) — flex 1 so it consumes leftover space.
             var sliderGo = new GameObject("Slider", typeof(RectTransform), typeof(Image), typeof(Slider));
             sliderGo.transform.SetParent(row.transform, false);
             sliderGo.GetComponent<Image>().color = new Color(0.85f, 0.85f, 0.85f);
@@ -414,9 +336,6 @@ namespace QoeDevice {
             sliderLe.minHeight = ui.Sx(18); sliderLe.preferredHeight = ui.Sx(18);
             var slider = sliderGo.GetComponent<Slider>();
 
-            // Fill (blue progress) — fillArea spans the full track. Any inset
-            // here makes the fill start at +offsetMin, so even at value 0 a
-            // gray strip shows at the left edge.
             var fillArea = new GameObject("FillArea", typeof(RectTransform));
             fillArea.transform.SetParent(sliderGo.transform, false);
             var fillAreaRT = (RectTransform)fillArea.transform;
@@ -429,7 +348,6 @@ namespace QoeDevice {
             fill.GetComponent<Image>().color = new Color(0.3f, 0.55f, 0.95f);
             slider.fillRect = fillRT;
 
-            // Handle
             var handleArea = new GameObject("HandleArea", typeof(RectTransform));
             handleArea.transform.SetParent(sliderGo.transform, false);
             var handleAreaRT = (RectTransform)handleArea.transform;
@@ -448,7 +366,6 @@ namespace QoeDevice {
 
             if (!string.IsNullOrEmpty(maxLabel)) ui.BuildPxLabel((RectTransform)row.transform, maxLabel, ui.Sx(70), TextAlignmentOptions.Left, 12);
 
-            // Value readout — fixed width so values 0..100 don't shift the row.
             var valueLabel = ui.BuildPxLabel((RectTransform)row.transform, "—", ui.Sx(36), TextAlignmentOptions.Center, 16);
             valueLabel.fontStyle = FontStyles.Bold;
 
@@ -477,11 +394,6 @@ namespace QoeDevice {
             if (!string.IsNullOrEmpty(title)) ui.BuildLabel(panel, title, 20, FontStyles.Bold);
             if (!string.IsNullOrEmpty(instr)) ui.BuildLabel(panel, instr, 14, FontStyles.Normal, new Color(0.4f, 0.4f, 0.4f));
 
-            // Each row is HorizontalLayoutGroup [ fixed-width label : GridLayoutGroup ].
-            // Same labelColW + same cellW * optCount across header & every row,
-            // so columns line up by construction. labelColW is sized to fit the
-            // longest row label (rough char-width estimate) rather than a fixed
-            // fraction, so the cells sit close to the labels — no big gap.
             int optCount = options.Count;
             float panelInnerW = Mathf.Max(1, formContainer.rect.width - 2 * ui.Sx(12) - 2 * ui.Sx(8));
             int spacing = ui.Sx(4);
@@ -490,7 +402,7 @@ namespace QoeDevice {
                 int n = (r["label"]?.ToString() ?? "").Length;
                 if (n > longestLabelChars) longestLabelChars = n;
             }
-            // ~0.55em per char at our 14pt label, plus a little breathing room.
+            // ~0.55em per char at 14pt, clamped to 45% of available width
             int labelColW = Mathf.Clamp(ui.Sx(Mathf.RoundToInt(longestLabelChars * 0.55f * 14f) + 16),
                                         ui.Sx(60), Mathf.RoundToInt(panelInnerW * 0.45f));
             int cellW = Mathf.Max(ui.Sx(28), Mathf.RoundToInt((panelInnerW - labelColW - spacing * (optCount + 1)) / Mathf.Max(1, optCount)));
@@ -499,13 +411,11 @@ namespace QoeDevice {
         }
 
         void BuildMatrixRows(RectTransform panel, JArray options, JArray rows, List<string> path, int labelColW, int cellW, int cellH, int spacing) {
-            // Header
             var header = NewMatrixRow(panel, "Header", labelColW, cellH, spacing);
             ui.BuildPxLabel((RectTransform)header.transform, "", labelColW, TextAlignmentOptions.Left, 14);
             var headerGrid = NewMatrixGrid(header, options.Count, cellW, cellH, spacing);
-            for (int i = 0; i < options.Count; i++) {
+            for (int i = 0; i < options.Count; i++)
                 ui.BuildPxLabel((RectTransform)headerGrid.transform, options[i].ToString(), cellW, TextAlignmentOptions.Center, 13);
-            }
 
             var rowSelections = new Dictionary<string, int?>();
             foreach (var rowToken in rows) {
@@ -531,9 +441,8 @@ namespace QoeDevice {
                     btn.onPress = () => {
                         rowSelections[keyCap] = idx;
                         SetAt(new List<string>(path) { keyCap }, idx);
-                        for (int j = 0; j < cellBtns.Count; j++) {
+                        for (int j = 0; j < cellBtns.Count; j++)
                             cellBtns[j].SetNormalColor((j == idx) ? new Color(0.16f, 0.5f, 0.95f) : Color.white);
-                        }
                         UpdateSubmitInteractable();
                     };
                 }
@@ -541,12 +450,8 @@ namespace QoeDevice {
             leafChecks.Add(() => rowSelections.Values.All(v => v != null));
         }
 
-        // One matrix row = HorizontalLayoutGroup [ label : grid ]. childControl*
-        // must be true so LayoutElement min/preferred sizes are honored; without
-        // it children fall back to default 100×100 sizeDelta and the row's
-        // visible height balloons. childForceExpandHeight=true makes the grid
-        // fill the row height so cells aren't islands of cellH inside a tall
-        // row, and childForceExpandWidth=false keeps widths from LayoutElement.
+        // childForceExpandHeight=true so cells fill the row; childForceExpandWidth=false
+        // to let LayoutElement widths take effect.
         RectTransform NewMatrixRow(RectTransform parent, string name, int labelColW, int cellH, int spacing) {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
@@ -593,7 +498,6 @@ namespace QoeDevice {
             });
             var le = btnGo.AddComponent<LayoutElement>();
             le.minHeight = ui.Sx(60); le.preferredHeight = ui.Sx(60);
-
             var lbl = ui.BuildLabel((RectTransform)btnGo.transform, debugMode ? "Submit (debug, log only)" : "Submit Rating", 18, FontStyles.Bold, Color.white, TextAlignmentOptions.Center);
             QoeUI.StretchToParent((RectTransform)lbl.transform);
         }
@@ -630,7 +534,6 @@ namespace QoeDevice {
             }
         }
 
-        // ── Answer tree helpers ──────────────────────────────────────────
         void SetAt(List<string> path, object value) {
             if (path.Count == 0) return;
             var cursor = answers;
@@ -649,17 +552,10 @@ namespace QoeDevice {
             submitButton.interactable = leafChecks.All(c => c());
         }
 
-        // No-op display-wise (statusText is always null now that the rating
-        // section has no status bar). Retained so the many call sites read
-        // naturally; the device client's top-right line is the only status UI.
         void SetStatus(string s) {
             if (statusText != null) statusText.text = s;
         }
 
-        // ── Debug preview payload ────────────────────────────────────────
-        // Mirrors RatingClientPage.tsx 'All combined' debug preview so we can
-        // exercise every renderer (radio_scale, slider_scale, group, matrix)
-        // in Unity without bringing the desktop server up.
         const string DEBUG_PREVIEW_JSON = @"[
             { ""id"": ""acr_0"", ""render"": ""radio_scale"", ""question"": ""Rate the overall quality of experience"", ""scale_min"": 1, ""scale_max"": 5, ""point_labels"": [""Bad"", ""Poor"", ""Fair"", ""Good"", ""Excellent""] },
             {

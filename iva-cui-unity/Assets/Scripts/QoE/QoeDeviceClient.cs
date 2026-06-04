@@ -151,12 +151,8 @@ namespace QoeDevice {
         RectTransform centerRegion;// rating UI + (later) pre-convo prompt
         MicrophoneHandler micHandler;
         // Friendly, short connection-error message for the subject-facing UI.
-        // Empty = no error. The verbose detail still goes to the debug hud/log.
+        // Empty = no error. The verbose detail still goes to the debug log.
         string lastError = "";
-        // Last verbose status string handed to SetHud. Re-applied to the status
-        // line after a rebuild (debug mode) so the operator detail survives a
-        // BuildUi without waiting for the next state change.
-        string lastHud = "";
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
@@ -239,9 +235,6 @@ namespace QoeDevice {
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(rootContainer);
             AttachCanvasFollower();
-            // Repaint the freshly-built status line with whatever we last showed
-            // (debug verbose) before falling through to state-derived updates.
-            if (connStatusText != null && debugMode) connStatusText.text = lastHud;
             UpdateButtonStates();
             UpdateUiVisibility();
         }
@@ -391,25 +384,17 @@ namespace QoeDevice {
             tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
         }
 
-        // Top-right corner, above the control buttons: the single status line,
-        // shown in BOTH modes (the placement the user asked for — same spot in
-        // debug and non-debug). The control column starts just below this strip
-        // (see BuildControlsCluster) so the two never collide.
-        //
-        //   • debug   → verbose operator detail, fed by SetHud (light blue).
-        //   • normal  → minimal Connected / Connecting… / Disconnected, derived
-        //               from the live socket state by RefreshConnStatus (gray).
-        //
-        // One text object serves both: SetHud only writes it in debug,
-        // RefreshConnStatus only writes it in non-debug, so they never fight.
+        // Top-right corner, above the control buttons: the one and only status
+        // line, identical in both modes — a minimal gray Connected / Connecting…
+        // / Disconnected derived from the live socket state (RefreshConnStatus).
+        // The control column starts just below this strip (see
+        // BuildControlsCluster) so the two never collide. Verbose operator detail
+        // is NOT shown here; it goes to the debug log panel instead (SetHud).
         void BuildConnStatus(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "ConnStatus", new Vector2(0.44f, 0.88f), new Vector2(1f, 1f), ui.Sx(4));
             connStatusGo = region.gameObject;
-            Color c = debugMode ? new Color(0.55f, 0.7f, 1f) : new Color(0.6f, 0.65f, 0.72f);
-            connStatusText = ui.BuildLabel(region, "", 13, FontStyles.Bold, c, TextAlignmentOptions.TopRight);
-            // Debug status sentences can run long; let them wrap rather than
-            // clip. Non-debug strings are one short word and fit on the line.
-            connStatusText.enableWordWrapping = true;
+            connStatusText = ui.BuildLabel(region, "", 13, FontStyles.Bold, new Color(0.6f, 0.65f, 0.72f), TextAlignmentOptions.TopRight);
+            connStatusText.enableWordWrapping = false;
             connStatusText.overflowMode = TextOverflowModes.Ellipsis;
             QoeUI.StretchToParent((RectTransform)connStatusText.transform);
         }
@@ -937,26 +922,21 @@ namespace QoeDevice {
             b.interactable = enabled;
         }
 
-        // Status line text. One TMP object in the top-right serves both modes,
-        // so the two writers are mutually exclusive by mode and never clobber
-        // each other:
-        //   • SetHud           → debug only: the verbose operator string.
-        //   • RefreshConnStatus → non-debug only: the minimal subject status.
-        // SetHud is called from many places with rich detail; in non-debug we
-        // simply ignore its argument and let RefreshConnStatus own the line.
+        // Verbose status string. This no longer drives any on-canvas text — the
+        // status line shows only the minimal connection state. The rich detail
+        // still reaches the debug log panel via the QoeLog.* calls at each call
+        // site. Kept as a no-op-ish shim so the many existing call sites don't
+        // need rewriting; it just refreshes the connection-state line.
         void SetHud(string s) {
-            lastHud = s ?? "";
-            if (connStatusText != null && debugMode) connStatusText.text = lastHud;
             RefreshConnStatus();
         }
 
-        // Minimal, subject-facing connection status for the top-right corner
-        // (non-debug). Derived from the live WS state so it stays correct no
-        // matter which code path changed things. Never surfaces internals — just
-        // Connected / Connecting… / Disconnected. No-op in debug, where SetHud
-        // owns the same line with the verbose string.
+        // The single status line, identical in both modes: minimal Connected /
+        // Connecting… / Disconnected derived from the live WS state, so it stays
+        // correct no matter which code path changed things. Never surfaces
+        // internals.
         void RefreshConnStatus() {
-            if (connStatusText == null || debugMode) return;
+            if (connStatusText == null) return;
             string s;
             if (IsWsOpen)            s = "Connected";
             else if (isConnecting)   s = "Connecting…";

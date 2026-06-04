@@ -62,8 +62,10 @@ namespace QoeDevice {
         // form swaps children of formContainer without touching device-client UI.
         RectTransform section;
         RectTransform formContainer;
+        // Status display was removed — the device client owns the single status
+        // line. statusText stays null so SetStatus() is a harmless no-op; the
+        // rich messages it received still go to the debug log via QoeLog.
         TMP_Text statusText;
-        GameObject statusBarGo;
         bool sectionDebugMode;
 
         public bool IsOpen => ws != null && ws.State == WebSocketState.Open;
@@ -103,7 +105,7 @@ namespace QoeDevice {
             // because it thinks a form is still up.
             if (section != null) {
                 if (Application.isPlaying) Destroy(section.gameObject); else DestroyImmediate(section.gameObject);
-                section = null; formContainer = null; statusText = null; statusBarGo = null;
+                section = null; formContainer = null; statusText = null;
             }
             IsFormVisible = false;
             sectionDebugMode = debugVisible;
@@ -122,44 +124,21 @@ namespace QoeDevice {
             var sectionLe = sectionGo.AddComponent<LayoutElement>();
             sectionLe.flexibleHeight = 1f; sectionLe.minHeight = ui.Sx(200);
 
-            BuildStatusBar(section);
+            // No status bar here — the device client owns the single status line
+            // (top-right). SetStatus() below is a safe no-op (statusText stays
+            // null); the rich messages still reach the debug log via QoeLog.
             BuildFormArea(section);
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(section);
             ApplySectionVisibility();
         }
 
-        // When debug is off, hide the entire rating section (status bar +
-        // form area) until a form arrives. Status text exposes the active
-        // condition label, so subjects must never see it. With debug on the
-        // section is always visible. With debug off it appears only while a
-        // form is being answered, and even then the status bar is hidden.
+        // When debug is off, hide the entire rating section until a form
+        // arrives, so subjects only ever see it while answering. With debug on
+        // the section is always visible.
         void ApplySectionVisibility() {
             bool sectionVisible = sectionDebugMode || IsFormVisible;
             if (section != null) section.gameObject.SetActive(sectionVisible);
-            if (statusBarGo != null) statusBarGo.SetActive(sectionDebugMode);
-        }
-
-        void BuildStatusBar(RectTransform parent) {
-            var rowGo = new GameObject("StatusBar", typeof(RectTransform));
-            statusBarGo = rowGo;
-            rowGo.transform.SetParent(parent, false);
-            var hg = rowGo.AddComponent<HorizontalLayoutGroup>();
-            hg.spacing = ui.Sx(6);
-            hg.childForceExpandWidth = false; hg.childForceExpandHeight = false;
-            hg.childControlWidth = true; hg.childControlHeight = true;
-            hg.childAlignment = TextAnchor.MiddleLeft;
-            // Single-line status text. Compact fixed-height row.
-            int rowH = ui.Sx(24);
-            var rowLe = rowGo.AddComponent<LayoutElement>();
-            rowLe.minHeight = rowH; rowLe.preferredHeight = rowH; rowLe.flexibleHeight = 0;
-
-            statusText = ui.BuildLabel((RectTransform)rowGo.transform, "Disconnected", 12, FontStyles.Normal, new Color(0.4f, 0.4f, 0.4f));
-            statusText.enableWordWrapping = false;
-            statusText.overflowMode = TextOverflowModes.Ellipsis;
-            var statusLe = statusText.gameObject.AddComponent<LayoutElement>();
-            statusLe.flexibleWidth = 1f; statusLe.minWidth = 0; statusLe.preferredWidth = 0;
-            statusLe.minHeight = rowH; statusLe.preferredHeight = rowH;
         }
 
         // The form area takes whatever vertical space rootContainer has left.
@@ -670,6 +649,9 @@ namespace QoeDevice {
             submitButton.interactable = leafChecks.All(c => c());
         }
 
+        // No-op display-wise (statusText is always null now that the rating
+        // section has no status bar). Retained so the many call sites read
+        // naturally; the device client's top-right line is the only status UI.
         void SetStatus(string s) {
             if (statusText != null) statusText.text = s;
         }

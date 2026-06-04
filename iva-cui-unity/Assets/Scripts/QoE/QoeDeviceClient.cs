@@ -301,14 +301,16 @@ namespace QoeDevice {
             dotLe.minWidth = dot; dotLe.preferredWidth = dot; dotLe.flexibleWidth = 0;
             dotLe.minHeight = dot; dotLe.preferredHeight = dot; dotLe.flexibleHeight = 0;
 
-            micLabel = ui.BuildLabel(region, "REC", 13, FontStyles.Bold, kMicRecording, TextAlignmentOptions.Left);
+            // Always visible: shows "MIC" (idle) / "REC" (recording). It used to be
+            // hidden at idle, which left just the gray dot + empty timer — reading
+            // as a featureless gray blob.
+            micLabel = ui.BuildLabel(region, "MIC", 13, FontStyles.Bold, kMicIdle, TextAlignmentOptions.Left);
             micLabel.enableWordWrapping = false;
             var mle = micLabel.gameObject.AddComponent<LayoutElement>();
-            mle.minWidth = ui.Sx(24); mle.preferredWidth = ui.Sx(24); mle.flexibleWidth = 0;
+            mle.minWidth = ui.Sx(30); mle.preferredWidth = ui.Sx(30); mle.flexibleWidth = 0;
             mle.minHeight = ui.Sx(18); mle.preferredHeight = ui.Sx(18);
-            micLabel.gameObject.SetActive(false);
 
-            timerText = ui.BuildLabel(region, "", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
+            timerText = ui.BuildLabel(region, "0:00", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
             timerText.enableWordWrapping = false;
             var tle = timerText.gameObject.AddComponent<LayoutElement>();
             tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
@@ -476,8 +478,11 @@ namespace QoeDevice {
             bool recording = micHandler != null && micHandler.IsRecording;
             var want = recording ? kMicRecording : kMicIdle;
             if (micDot.color != want) micDot.color = want;
-            if (micLabel != null && micLabel.gameObject.activeSelf != recording)
-                micLabel.gameObject.SetActive(recording);
+            if (micLabel != null) {
+                string txt = recording ? "REC" : "MIC";
+                if (micLabel.text != txt) micLabel.text = txt;
+                if (micLabel.color != want) micLabel.color = want;
+            }
         }
 
         async void OnDestroy() {

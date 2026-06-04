@@ -368,6 +368,13 @@ public class TrainingSceneController : MonoBehaviour
                 botAudioSource.Play();
                 ResetThinking();
                 timeStamp_UserFinishedInput = 0.0f;
+
+                // Agent wrapped up (user said goodbye) — end the round after the
+                // goodbye clip plays, same as the zone pipeline.
+                if (speechResponse != null && speechResponse.conversation_over)
+                {
+                    StartCoroutine(EndRunAfterClip(clip != null ? clip.length : 0f));
+                }
             }
             else
             {
@@ -377,12 +384,19 @@ public class TrainingSceneController : MonoBehaviour
         }
     }
 
+    private IEnumerator EndRunAfterClip(float clipLength)
+    {
+        yield return new WaitForSeconds(clipLength + 0.5f);
+        QoeDevice.QoeDeviceClient.NotifyConversationOver();
+    }
+
     [System.Serializable]
     public class TrainingSpeechResponse
     {
         public string message;
         public string audio;
         public string transition;
+        public bool conversation_over;
 
         public string llm_client_name;
         public int user_input_word_count;

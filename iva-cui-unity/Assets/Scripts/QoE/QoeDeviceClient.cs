@@ -33,6 +33,11 @@ namespace QoeDevice {
     public enum DevicePhase { Idle, LoadingTask, TaskReceived, Briefing, RunningTask }
 
     public class QoeDeviceClient : MonoBehaviour {
+        // Single live client. Set in Awake so the audio pipelines can reach it via
+        // NotifyConversationOver without holding a reference. Only one device
+        // client exists in QoE_Shell.
+        public static QoeDeviceClient instance;
+
         [Header("Server")]
         public string serverHost = "192.168.1.50";
         public int serverPort = 8080;
@@ -153,9 +158,50 @@ namespace QoeDevice {
             "You're at the civil rights exhibit, talking to Tammy, a volunteer. Have a conversation about the exhibit or anything you're curious about.",
         };
 
+        // Suggested talking-points per task — shown in the briefing AND kept on
+        // the HUD during the run as a small reminder list, so a subject who runs
+        // out of things to say has prompts to fall back on. These are NOT tracked
+        // or required (no checkmarks, no completion); they're conversational
+        // scaffolding only, repurposed from the original quest goals into pure
+        // "things to talk about". One string per task; lines are split on '|'.
+        static readonly string[] kTaskTalkingPoints = {
+            // 0 Training
+            "How do I talk to you?|How am I finding the environment",
+            // 1–3 City (Shirts)
+            "How they've been lately|Tell them something going on with you|Make plans to hang out",
+            "What the store sells|Returning or exchanging an item|Ask for a recommendation",
+            "How they run the store|A return or refund|Ask about the clothing range",
+            // 4–6 Hotel
+            "Checking in / your room|Things to do nearby|The hotel's restaurant",
+            "What they're working on|How the hotel is run|Anything that needs fixing",
+            "Today's specials|Food you like or avoid|Recommendations",
+            // 7–9 Museum
+            "Visiting the museum today|What's on display|Student admission",
+            "What the Cyrus cylinder is|Why it matters|Who Cyrus was",
+            "The civil rights movement|Martin Luther King|The Montgomery Bus Boycott",
+        };
+
         string BriefingFor(int taskIndex) {
-            if (taskIndex >= 0 && taskIndex < kTaskBriefings.Length) return kTaskBriefings[taskIndex];
-            return "Press Start when you're ready to begin talking with the agent in front of you.";
+            string intro = (taskIndex >= 0 && taskIndex < kTaskBriefings.Length)
+                ? kTaskBriefings[taskIndex]
+                : "Press Start when you're ready to begin talking with the agent in front of you.";
+            string points = TalkingPointsBlock(taskIndex);
+            if (string.IsNullOrEmpty(points)) return intro;
+            return intro + "\n\nYou could talk about:\n" + points;
+        }
+
+        // The talking-points formatted as a bulleted block. Empty string if none.
+        string TalkingPointsBlock(int taskIndex) {
+            if (taskIndex < 0 || taskIndex >= kTaskTalkingPoints.Length) return "";
+            var raw = kTaskTalkingPoints[taskIndex];
+            if (string.IsNullOrEmpty(raw)) return "";
+            var parts = raw.Split('|');
+            var sb = new StringBuilder();
+            for (int i = 0; i < parts.Length; i++) {
+                if (i > 0) sb.Append('\n');
+                sb.Append("• ").Append(parts[i].Trim());
+            }
+            return sb.ToString();
         }
 
         static readonly Color kBlue         = new(0.16f, 0.5f,  0.95f);
@@ -171,6 +217,9 @@ namespace QoeDevice {
         TMP_Text timerText;
         TMP_Text briefingText;
         GameObject briefingGo;
+        TMP_Text pointsText;
+        GameObject pointsGo;
+        PressDownButton doneButton;
         Image    micDot;
         TMP_Text micLabel;
         TMP_Text connStatusText;
@@ -185,6 +234,7 @@ namespace QoeDevice {
         MicrophoneHandler micHandler;
         string lastError = "";
 
+        void Awake()     { instance = this; }
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
         void OnDisable() { Application.logMessageReceived -= OnUnityLog; }
 
@@ -227,6 +277,7 @@ namespace QoeDevice {
             BuildControlsCluster(rootContainer);
             BuildCenterRegion(rootContainer);
             BuildBriefingPanel(rootContainer);
+            BuildPointsPanel(rootContainer);
             BuildErrorBanner(rootContainer);
             if (debugMode) BuildTaskGrid(rootContainer, rootW, rootH);
             if (debugMode) BuildLogPanel(rootContainer);
@@ -256,6 +307,9 @@ namespace QoeDevice {
             // the context, before they press Start. The debug Task buttons enter
             // Briefing too, so manual testing shows it exactly like a real run.
             if (briefingGo != null) briefingGo.SetActive(briefing);
+
+            // Talking-points + Done panel — only during the run.
+            if (pointsGo != null) pointsGo.SetActive(running);
 
             // Mic indicator + timer cluster — shown while a task is running. The
             // debug Task buttons enter RunningTask too (DebugStartTask), so this
@@ -316,8 +370,8 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = null;
-            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null;
+            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = null;
+            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -443,6 +497,42 @@ namespace QoeDevice {
             sle.minHeight = sh; sle.preferredHeight = sh; sle.flexibleHeight = 0f;
         }
 
+        // During-run panel: the (untracked) talking-points reminder plus the
+        // subject-facing Done button. Lower-left so it clears the top-left timer/
+        // mic cluster and the right-side controls. Visible only while RunningTask.
+        // In debug the task grid + log occupy the bottom, so this sits a little
+        // higher and narrower to avoid them.
+        void BuildPointsPanel(RectTransform parent) {
+            Vector2 min = debugMode ? new Vector2(0f, 0.18f) : new Vector2(0f, 0.0f);
+            Vector2 max = debugMode ? new Vector2(0.34f, 0.82f) : new Vector2(0.34f, 0.82f);
+            var region = ui.BuildAnchoredRegion(parent, "Points", min, max, ui.Sx(6));
+            pointsGo = region.gameObject;
+            var bg = region.gameObject.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.4f);
+
+            var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(8);
+            vlg.padding = new RectOffset(ui.Sx(10), ui.Sx(10), ui.Sx(10), ui.Sx(10));
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+
+            ui.BuildLabel(region, "You could talk about:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
+
+            pointsText = ui.BuildLabel(region, "", 14, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
+            pointsText.enableWordWrapping = true;
+            var ple = pointsText.gameObject.AddComponent<LayoutElement>();
+            ple.flexibleHeight = 1f;
+
+            // Done = the subject's manual off-ramp (FinishRun). Distinct from the
+            // operator's red End Run button; this one is theirs to press when the
+            // conversation feels finished.
+            doneButton = ui.BuildButton(region, "Done", kGreen, 16, OnDonePressed);
+            var dle = doneButton.GetComponent<LayoutElement>();
+            int dh = ui.Sx(40);
+            dle.minHeight = dh; dle.preferredHeight = dh; dle.flexibleHeight = 0f;
+        }
+
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
             const float gridFracW = 0.72f;
             var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(gridFracW, 0.16f), ui.Sx(6));
@@ -533,6 +623,7 @@ namespace QoeDevice {
         public void OnStartPressed() {
             if (phase != DevicePhase.Briefing) return;
             StudyControls.conversationGateOpen = true;
+            if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
             if (!isDebugRun) {
                 QoeLog.Event("ws", $"sending ready for run {activeRunId}");
                 SendJson(new { type = WsType.Ready });
@@ -734,18 +825,51 @@ namespace QoeDevice {
                 }
                 yield return null;
             }
+            // Natural timer expiry. Clear runCo first so FinishRun doesn't try to
+            // StopCoroutine the coroutine it's being called from.
+            runCo = null;
+            FinishRun("timer expired");
+        }
+
+        // Single end-of-run path shared by every way a run can end: timer expiry,
+        // the operator End Run button, the agent wrapping up the conversation
+        // (NotifyConversationOver), and the subject's Done button. Idempotent via
+        // the RunningTask phase guard, so a conversation-over + timer race can't
+        // double-fire /end-condition. The timer is purely an upper bound now — any
+        // of the other reasons can end the round earlier so the subject goes
+        // straight to rating instead of waiting it out.
+        void FinishRun(string reason) {
+            if (phase != DevicePhase.RunningTask) return;
+            QoeLog.Event("task", $"finishing run {activeRunId} '{activeLabel}' — reason: {reason}");
+            if (runCo != null) { StopCoroutine(runCo); runCo = null; }
             SetTimer(0);
             EndConversationCleanup();
             TeleportToNeutral();
             if (isDebugRun) {
-                QoeLog.Event("task", $"DEBUG task finished after {maxDurationS}s — no /end-condition");
-                SetHud("Debug run finished");
+                SetHud($"Debug run ended ({reason})");
                 TransitionPhase(DevicePhase.Idle);
             } else {
-                QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
-                yield return PostEndCondition(activeSid);
+                SetHud($"Run ended ({reason}) — calling /end-condition…");
+                StartCoroutine(PostEndCondition(activeSid));
             }
-            runCo = null;
+        }
+
+        // The agent appended its end-of-conversation marker (user said goodbye)
+        // and the goodbye clip has finished. Static entry point so the audio
+        // pipelines (ServerInterface / TrainingSceneController) can reach the live
+        // client without a reference. No-ops when there's no active run.
+        public static void NotifyConversationOver() {
+            if (instance == null) return;
+            if (instance.phase != DevicePhase.RunningTask) return;
+            instance.FinishRun("agent wrapped up");
+        }
+
+        // Subject-facing Done button: a manual off-ramp in case they simply stop
+        // talking and the agent never gets a goodbye cue. Timer remains the
+        // backstop.
+        public void OnDonePressed() {
+            if (phase != DevicePhase.RunningTask) return;
+            FinishRun("subject pressed Done");
         }
 
         void SetTimer(int remainingS) {
@@ -755,19 +879,7 @@ namespace QoeDevice {
         }
 
         public void EndRunEarly() {
-            if (phase != DevicePhase.RunningTask) return;
-            QoeLog.Event("task", $"end run early: run {activeRunId} '{activeLabel}'");
-            if (runCo != null) { StopCoroutine(runCo); runCo = null; }
-            SetTimer(0);
-            EndConversationCleanup();
-            TeleportToNeutral();
-            if (isDebugRun) {
-                SetHud("Debug run ended");
-                TransitionPhase(DevicePhase.Idle);
-            } else {
-                SetHud("Ending run early — calling /end-condition…");
-                StartCoroutine(PostEndCondition(activeSid));
-            }
+            FinishRun("operator ended early");
         }
 
         // Hard-stop the conversation at the end of a run (timer expiry or End Run),
@@ -933,6 +1045,7 @@ namespace QoeDevice {
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
             SetBtn(startButton,       phase == DevicePhase.Briefing);
+            SetBtn(doneButton,        phase == DevicePhase.RunningTask);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();
         }

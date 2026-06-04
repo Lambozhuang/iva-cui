@@ -187,6 +187,15 @@ public class ServerInterface : MonoBehaviour
                     StartCoroutine(SendTransitionCheckRequest(agent));
                 }
 
+                // Agent wrapped up (user said goodbye). Let the goodbye clip play,
+                // then end the round so the subject goes straight to rating rather
+                // than waiting out the timer. Guarded inside NotifyConversationOver
+                // so it no-ops when there's no active QoE run (e.g. plain testing).
+                if (speechResponse != null && speechResponse.conversation_over)
+                {
+                    StartCoroutine(EndRunAfterClip(clip != null ? clip.length : 0f));
+                }
+
                 SceneProfiling.ComputeTimes(speechResponse);
             }
             else
@@ -196,12 +205,27 @@ public class ServerInterface : MonoBehaviour
         }
     }
 
+    // Wait out the goodbye clip (plus a short beat so it isn't cut off), then ask
+    // the QoE device client to end the round. A small fixed pad covers the gap
+    // between download and the clip actually starting on the agent's AudioSource.
+    private IEnumerator EndRunAfterClip(float clipLength)
+    {
+        yield return new WaitForSeconds(clipLength + 0.5f);
+        QoeDevice.QoeDeviceClient.NotifyConversationOver();
+    }
+
     [System.Serializable]
     public class SpeechResponse
     {
         public string message;
         public string audio;
         public string transition;
+
+        // True when the agent wrapped up because the user signalled they were
+        // done (backend stripped the <END> marker). The device ends the round
+        // once this reply's audio finishes playing. JsonUtility leaves it false
+        // when the field is absent, so older backends are handled gracefully.
+        public bool conversation_over;
 
         // Fields arriving in JSON response
         public string llm_client_name;

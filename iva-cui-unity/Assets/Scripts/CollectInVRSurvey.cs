@@ -70,6 +70,15 @@ public class CollectInVRSurvey : MonoBehaviour
             {AgentType.Agent3, false}
         };
 
+        // QoE thesis: the in-world pop-up survey is replaced by QoeRatingClient,
+        // and its walls/transforms/EndOfScene objects may be deleted from
+        // QoE_Shell. Skip all scene-object lookups so a leftover component on a
+        // GameObject doesn't NRE at startup.
+        if (StudyControls.oneOffConversations)
+        {
+            return;
+        }
+
         FindSurveyTransforms();
         CreateSurveyAnswersFile();
         DisableMeshRenderersOfSurveyColliders();

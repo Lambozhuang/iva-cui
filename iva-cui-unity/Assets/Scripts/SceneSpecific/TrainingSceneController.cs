@@ -62,6 +62,11 @@ public class TrainingSceneController : MonoBehaviour
 
     public static void MoveToNextPhase(bool advancePath = true)
     {
+        // One-off mode has no tutorial walkthrough; nothing to advance.
+        if (StudyControls.oneOffConversations)
+        {
+            return;
+        }
         if (advancePath)
         {
             PathRenderer.EnablePathAt(pathPhaseIdx);
@@ -128,6 +133,15 @@ public class TrainingSceneController : MonoBehaviour
         if (microphoneHandler == null)
         {
             Debug.LogError("MicrophoneHandler not found.");
+        }
+
+        // The mic pipeline below is the only part of this controller the QoE study
+        // needs. The quest task-UI / inventory walkthrough is one-off-disabled, so
+        // skip finding & seeding those scene objects — they may be deleted from
+        // QoE_Shell entirely.
+        if (StudyControls.oneOffConversations)
+        {
+            return;
         }
 
         taskTexts = FindObjectsOfType<TMP_Text>().Where(t => t.name == "task_ui_text").ToList();
@@ -258,10 +272,10 @@ public class TrainingSceneController : MonoBehaviour
     public void PrintTranscriptionAndSendResponseGenerationRequest(string transcription)
     {
         var transcription_on_ui = $"You said: \"{transcription}\"";
-        transcriptionTextUI.text = transcription_on_ui;
+        if (transcriptionTextUI != null) transcriptionTextUI.text = transcription_on_ui;
         micInputsDone++;
 
-        if (micInputsDone == 3)
+        if (micInputsDone == 3 && endOfSceneObject != null)
         {
             endOfSceneObject.SetActive(true);
         }

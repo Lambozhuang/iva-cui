@@ -176,7 +176,16 @@ public class ServerInterface : MonoBehaviour
                 AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
                 AgentSelectionController.PlayAudioForAgent(agent, clip, speechResponse);
 
-                StartCoroutine(SendTransitionCheckRequest(agent));
+                // QoE thesis: skip the per-turn transition check in one-off mode.
+                // /check_transition fires a second LLM call every turn, but its
+                // result is fed to HandleLLMDeterminedTask which early-outs under
+                // oneOffConversations — so the call is pure wasted backend work
+                // that competes with the next turn's /speak on the single LLM
+                // server and adds uncontrolled latency to the QoE measurement.
+                if (!StudyControls.oneOffConversations)
+                {
+                    StartCoroutine(SendTransitionCheckRequest(agent));
+                }
 
                 SceneProfiling.ComputeTimes(speechResponse);
             }

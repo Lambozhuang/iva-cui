@@ -212,7 +212,10 @@ namespace QoeDevice {
             bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
             bool taskReceived  = phase == DevicePhase.TaskReceived;
 
-            if (topLeftGo    != null) topLeftGo.SetActive(running);
+            // Mic indicator + timer cluster. Normally only during a running task,
+            // but also show it in debug mode so the mic indicator is visible while
+            // testing via the Task teleport buttons (which don't enter RunningTask).
+            if (topLeftGo    != null) topLeftGo.SetActive(running || debugMode);
             if (logPanelGo   != null) logPanelGo.SetActive(debugMode);
             if (taskGridGo   != null) taskGridGo.SetActive(debugMode);
             if (connStatusGo != null) connStatusGo.SetActive(true);

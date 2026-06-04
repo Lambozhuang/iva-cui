@@ -39,7 +39,17 @@ SHARED_STYLE = """
 This is a casual, open-ended, standalone conversation. There is no task to finish, no checklist, and no next person to send the user to. Do not follow a script or try to move the conversation toward any goal or conclusion. Simply stay in character and respond naturally to whatever the user says, for as long as they wish to talk.
 Always reply in AT MOST two short sentences. Never give long explanations, monologues, or lists; if the user asks for more detail, give a little more in your next short reply rather than one long answer.
 You only say things a real person would say out loud. Never describe actions, gestures, or emotions, and never use text between asterisks or parentheses.
+
+--- ENDING THE CONVERSATION ---
+Do not try to end the conversation yourself or rush the user along. But when the USER clearly signals they are finished — they say goodbye, thank you and nothing more, "that's all", "I'm done", or otherwise wrap things up — then give a short, warm, in-character farewell (one sentence) and append the exact tag <END> to the very end of that farewell. Only ever use the <END> tag on such a closing farewell, never in the middle of an ongoing conversation. Do not explain the tag or say the word "end"; just place <END> as the final characters of your closing message.
 """
+
+# Marker an agent appends to its final farewell when the user has wrapped up the
+# conversation (see SHARED_STYLE). The backend strips it from the spoken text and
+# instead reports conversation_over=true in the /speak response, so the device can
+# end the round gracefully — no extra LLM call, it rides on the reply we already
+# generated.
+END_MARKER = "<END>"
 
 
 import_cache = {}
@@ -99,18 +109,28 @@ class Agent:
     def add_user_message(self, user_input: str) -> None:
         self.messages.append({"role": "user", "content": user_input})
 
-    def generate_response(self) -> str:
+    def generate_response(self):
         response_text = self.client.chat(
             messages=self.messages, max_tokens=SPEAK_MAX_TOKENS
         )
         response_text = remove_text_between_symbols(response_text)
+
+        # Detect the end-of-conversation marker the agent appends to a closing
+        # farewell (see SHARED_STYLE). Strip it from the spoken text — the user
+        # should hear the goodbye, not the tag — and report it separately. Match
+        # case-insensitively and tolerate the model wrapping it in punctuation.
+        conversation_over = END_MARKER.lower() in response_text.lower()
+        if conversation_over:
+            response_text = re.sub(
+                re.escape(END_MARKER), "", response_text, flags=re.IGNORECASE
+            ).strip()
 
         # handle generated response being empty
         if len(response_text) < 2:
             response_text = "I'm sorry, but I'm having issues understanding you. Could you please repeat that?"
 
         self.messages.append({"role": "assistant", "content": response_text})
-        return response_text, ""
+        return response_text, "", conversation_over
 
     def check_for_transition(self):
         sys_prompt, user_prompt, next_task_str = self.get_transition_check_message(
@@ -190,10 +210,10 @@ class ConversationHandler:
             ),
         }
 
-    def process_user_message(self, role: str, user_input: str) -> list[str, str]:
+    def process_user_message(self, role: str, user_input: str):
         agent: Agent = self.agents[role]
         agent.add_user_message(user_input)
-        response = agent.generate_response()
+        response = agent.generate_response()  # (text, next_task, conversation_over)
         return response
 
     def check_for_state_transition(self, role: str) -> str:

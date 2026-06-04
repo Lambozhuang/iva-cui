@@ -15,9 +15,13 @@ curr_role = "agent1"
 
 
 def speak_to_agent(role, usr_msg):
-    llm_response, next_user_task = handler.process_user_message(role, usr_msg)
+    llm_response, next_user_task, conversation_over = handler.process_user_message(
+        role, usr_msg
+    )
 
     print(Y + f"{role}: {llm_response}" + RESET)
+    if conversation_over:
+        print(R + "[conversation_over]" + RESET)
 
 
 def check_for_transition(role):

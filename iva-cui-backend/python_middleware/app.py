@@ -82,7 +82,9 @@ async def speak(
     global handler
 
     _st = time.time()
-    llm_response, next_user_task = handler.process_user_message(role, text)
+    llm_response, next_user_task, conversation_over = handler.process_user_message(
+        role, text
+    )
     _llm_processing_duration = (time.time() - _st) * 1000
 
     _log_turn(role, text, llm_response)
@@ -107,6 +109,9 @@ async def speak(
         "message": llm_response,
         "audio": fname,
         "transition": next_user_task,
+        # True when the agent wrapped up because the user signalled they were
+        # done; the device ends the round after the goodbye clip plays.
+        "conversation_over": conversation_over,
     }
     logging_info = {
         "llm_client_name": LLM_CLIENT_NAME,

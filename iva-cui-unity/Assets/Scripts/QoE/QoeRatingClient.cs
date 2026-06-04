@@ -36,6 +36,14 @@ namespace QoeDevice {
         readonly Dictionary<string, object> answers = new();
         readonly List<Func<bool>> leafChecks = new();
         Button submitButton;
+        // Time (unscaled) at which Submit most recently became interactable. The
+        // option buttons fire on PointerDown (PressDownButton), and selecting the
+        // last-needed option enables Submit mid-gesture — so the SAME trigger pull
+        // that picks an option can land its release (or a routed UI-Submit event)
+        // on the now-live Submit and instantly submit the form. Reject any submit
+        // that arrives within this guard window of Submit becoming enabled.
+        float submitEnabledAt = -1f;
+        const float kSubmitArmDelay = 0.5f;
         readonly QoeUI ui = new();
 
         RectTransform section;
@@ -187,6 +195,7 @@ namespace QoeDevice {
             answers.Clear();
             leafChecks.Clear();
             submitButton = null;
+            submitEnabledAt = -1f;
             if (formContainer == null) return;
             for (int i = formContainer.childCount - 1; i >= 0; i--) {
                 var child = formContainer.GetChild(i).gameObject;
@@ -488,6 +497,13 @@ namespace QoeDevice {
             btnGo.GetComponent<Image>().color = new Color(0.16f, 0.5f, 0.95f);
             submitButton = btnGo.GetComponent<Button>();
             submitButton.onClick.AddListener(() => {
+                // Reject a submit that arrives within the arm window of Submit
+                // becoming interactable — that's the same gesture that selected
+                // the final option, not a deliberate press on Submit.
+                if (submitEnabledAt < 0f || Time.unscaledTime - submitEnabledAt < kSubmitArmDelay) {
+                    QoeLog.Event("rating", "ignoring submit within arm window (likely same gesture that enabled it)");
+                    return;
+                }
                 if (debugMode) {
                     QoeLog.Event("rating", $"debug submit: {JsonConvert.SerializeObject(answers)}");
                     ClearForm();
@@ -549,7 +565,12 @@ namespace QoeDevice {
 
         void UpdateSubmitInteractable() {
             if (submitButton == null) return;
-            submitButton.interactable = leafChecks.All(c => c());
+            bool wasInteractable = submitButton.interactable;
+            bool nowInteractable = leafChecks.All(c => c());
+            submitButton.interactable = nowInteractable;
+            // Stamp the moment it transitions disabled→enabled so the click guard
+            // can reject a submit fired by the same gesture that enabled it.
+            if (nowInteractable && !wasInteractable) submitEnabledAt = Time.unscaledTime;
         }
 
         void SetStatus(string s) {

@@ -143,7 +143,10 @@ namespace QoeDevice {
         // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
         static readonly string[] kTaskBriefings = {
             // 0 Training
-            "You're in a practice area with Alfred, a friendly assistant. Say hello and chat with him to get comfortable talking to a virtual agent — ask anything you like about the VR controls.",
+            "Welcome! In this study you'll have a series of short conversations with virtual people. This first one is just practice.\n\n" +
+            "How it works: each conversation has a time limit, shown as a countdown — it's only an upper limit, so don't rush. When you feel the conversation is finished, simply say goodbye and the person will wrap up; a Done button will then appear for you to continue.\n\n" +
+            "After each conversation you'll be asked a few quick questions about how it felt, then you'll move on to the next one.\n\n" +
+            "Right now you're with Alfred, a friendly assistant. Say hello and chat with him to get comfortable — to speak, press the microphone button on your right controller, and press it again when you finish talking.",
             // 1–3 City (Shirts)
             "You're at your friend Sage's place, just hanging out. Catch up with them and chat about whatever comes to mind.",
             "You're in a clothing store, talking to Niko, the shop clerk. Strike up a conversation — ask about the store or whatever you're curious about.",
@@ -220,6 +223,10 @@ namespace QoeDevice {
         TMP_Text pointsText;
         GameObject pointsGo;
         PressDownButton doneButton;
+        // True once the agent has wrapped up the conversation (user said goodbye).
+        // The Done button stays hidden until this flips, so it isn't offered from
+        // the start of the run. Reset at the start of each run.
+        bool conversationWrappedUp;
         Image    micDot;
         TMP_Text micLabel;
         TMP_Text connStatusText;
@@ -308,8 +315,10 @@ namespace QoeDevice {
             // Briefing too, so manual testing shows it exactly like a real run.
             if (briefingGo != null) briefingGo.SetActive(briefing);
 
-            // Talking-points + Done panel — only during the run.
+            // Talking-points panel — during the whole run. The Done button inside
+            // it stays hidden until the agent wraps up (conversationWrappedUp).
             if (pointsGo != null) pointsGo.SetActive(running);
+            SetActive(doneButton, running && conversationWrappedUp);
 
             // Mic indicator + timer cluster — shown while a task is running. The
             // debug Task buttons enter RunningTask too (DebugStartTask), so this
@@ -474,20 +483,28 @@ namespace QoeDevice {
         // gate and begins the timer — see OnStartPressed. Built separately from
         // the rating client's center region so neither clobbers the other.
         void BuildBriefingPanel(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.14f, 0.2f), new Vector2(0.86f, 0.82f), ui.Sx(6));
+            // Near-full-canvas so even the long training briefing (timer +
+            // questionnaire explanation + talking-points) has room.
+            var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.04f, 0.08f), new Vector2(0.96f, 0.94f), ui.Sx(6));
             briefingGo = region.gameObject;
             var bg = region.gameObject.AddComponent<Image>();
-            bg.color = new Color(0f, 0f, 0f, 0.55f);
+            bg.color = new Color(0f, 0f, 0f, 0.6f);
 
             var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = ui.Sx(14);
-            vlg.padding = new RectOffset(ui.Sx(18), ui.Sx(18), ui.Sx(18), ui.Sx(18));
+            vlg.spacing = ui.Sx(10);
+            vlg.padding = new RectOffset(ui.Sx(16), ui.Sx(16), ui.Sx(14), ui.Sx(14));
             vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
             vlg.childControlWidth = true; vlg.childControlHeight = true;
-            vlg.childAlignment = TextAnchor.MiddleCenter;
+            vlg.childAlignment = TextAnchor.UpperCenter;
 
-            briefingText = ui.BuildLabel(region, "", 18, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
+            // Text takes the available space and auto-shrinks to fit rather than
+            // overflowing. Left-aligned so the "• talking point" bullets read as a
+            // list; word-wrap on. Floor of ~10pt keeps it legible in-headset.
+            briefingText = ui.BuildLabel(region, "", 17, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             briefingText.enableWordWrapping = true;
+            briefingText.enableAutoSizing = true;
+            briefingText.fontSizeMin = ui.Sx(10);
+            briefingText.fontSizeMax = ui.Sx(17);
             var tle = briefingText.gameObject.AddComponent<LayoutElement>();
             tle.flexibleHeight = 1f;
 
@@ -521,12 +538,17 @@ namespace QoeDevice {
 
             pointsText = ui.BuildLabel(region, "", 14, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             pointsText.enableWordWrapping = true;
+            pointsText.enableAutoSizing = true;
+            pointsText.fontSizeMin = ui.Sx(9);
+            pointsText.fontSizeMax = ui.Sx(14);
             var ple = pointsText.gameObject.AddComponent<LayoutElement>();
             ple.flexibleHeight = 1f;
 
-            // Done = the subject's manual off-ramp (FinishRun). Distinct from the
-            // operator's red End Run button; this one is theirs to press when the
-            // conversation feels finished.
+            // Done ends the run and moves the subject to the questionnaire. It is
+            // hidden until the agent wraps up the conversation (the user said
+            // goodbye → NotifyConversationOver), so it isn't offered from the
+            // start; UpdateUiVisibility gates it on conversationWrappedUp. Distinct
+            // from the operator's red End Run button.
             doneButton = ui.BuildButton(region, "Done", kGreen, 16, OnDonePressed);
             var dle = doneButton.GetComponent<LayoutElement>();
             int dh = ui.Sx(40);
@@ -623,6 +645,7 @@ namespace QoeDevice {
         public void OnStartPressed() {
             if (phase != DevicePhase.Briefing) return;
             StudyControls.conversationGateOpen = true;
+            conversationWrappedUp = false; // Done button hidden until the agent wraps up
             if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
             if (!isDebugRun) {
                 QoeLog.Event("ws", $"sending ready for run {activeRunId}");
@@ -855,18 +878,25 @@ namespace QoeDevice {
         }
 
         // The agent appended its end-of-conversation marker (user said goodbye)
-        // and the goodbye clip has finished. Static entry point so the audio
-        // pipelines (ServerInterface / TrainingSceneController) can reach the live
-        // client without a reference. No-ops when there's no active run.
+        // and the goodbye clip has finished. Rather than end the run outright,
+        // this REVEALS the Done button so the subject taps it to proceed to the
+        // questionnaire on their own beat — the conversation has reached a natural
+        // close, but we don't yank them out mid-moment. Static entry point so the
+        // audio pipelines can reach the live client without a reference.
         public static void NotifyConversationOver() {
             if (instance == null) return;
             if (instance.phase != DevicePhase.RunningTask) return;
-            instance.FinishRun("agent wrapped up");
+            if (instance.conversationWrappedUp) return; // already revealed
+            instance.conversationWrappedUp = true;
+            QoeLog.Event("task", $"agent wrapped up '{instance.activeLabel}' — Done button revealed");
+            instance.SetHud("Conversation finished — press Done to continue");
+            instance.UpdateUiVisibility();
+            instance.UpdateButtonStates();
         }
 
-        // Subject-facing Done button: a manual off-ramp in case they simply stop
-        // talking and the agent never gets a goodbye cue. Timer remains the
-        // backstop.
+        // Subject-facing Done button: ends the run and moves to the questionnaire.
+        // Only shown after the agent has wrapped up (conversationWrappedUp). The
+        // timer remains the backstop if the conversation never reaches a close.
         public void OnDonePressed() {
             if (phase != DevicePhase.RunningTask) return;
             FinishRun("subject pressed Done");
@@ -1045,7 +1075,7 @@ namespace QoeDevice {
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
             SetBtn(startButton,       phase == DevicePhase.Briefing);
-            SetBtn(doneButton,        phase == DevicePhase.RunningTask);
+            SetBtn(doneButton,        phase == DevicePhase.RunningTask && conversationWrappedUp);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();
         }

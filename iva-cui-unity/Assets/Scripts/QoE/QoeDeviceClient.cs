@@ -506,12 +506,12 @@ namespace QoeDevice {
             isDebugRun = false;
             TeleportToTask(activeTaskIndex);
             yield return null; // let rig move + camera-follower settle
-            QoeLog.Event("ws", $"sending ready for run {activeRunId}");
-            SendJson(new { type = WsType.Ready });
-            CloseWsIntentional();
-            if (ratingClient != null) ratingClient.CloseWs();
-            // Show the briefing and wait for the subject to press Start before the
-            // timed run begins (and before the conversation is un-gated).
+            // Show the briefing and wait for Start. The `ready` handshake is NOT
+            // sent here: it tells the operator to apply the netem condition and
+            // begin its condition clock, which must line up with the device's own
+            // timed window — and that window doesn't open until the subject has
+            // read the context and pressed Start. So `ready` is sent in
+            // OnStartPressed, not before the subject has even started reading.
             EnterBriefing();
         }
 
@@ -527,10 +527,18 @@ namespace QoeDevice {
         }
 
         // Start button: the subject has read the context and is ready to talk.
-        // Opens the conversation gate and starts the timed measurement window.
+        // Opens the conversation gate and starts the timed measurement window. For
+        // a real run this is also where we send `ready` (and close the WS), so the
+        // operator's condition/netem clock starts together with the device timer.
         public void OnStartPressed() {
             if (phase != DevicePhase.Briefing) return;
             StudyControls.conversationGateOpen = true;
+            if (!isDebugRun) {
+                QoeLog.Event("ws", $"sending ready for run {activeRunId}");
+                SendJson(new { type = WsType.Ready });
+                CloseWsIntentional();
+                if (ratingClient != null) ratingClient.CloseWs();
+            }
             QoeLog.Event("task", $"Start pressed — conversation open, timing '{activeLabel}'");
             TransitionPhase(DevicePhase.RunningTask);
             if (runCo != null) { StopCoroutine(runCo); }

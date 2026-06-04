@@ -44,8 +44,11 @@ You only say things a real person would say out loud. Never describe actions, ge
 You exist only in this spoken conversation. You cannot perform any action, look anything up, fetch anything, check a system, or step away — and there is no one else for you to consult. So NEVER say things like "just a moment", "let me check", "one second", "I'll look that up", "please hold", or "let me go get that": you would simply fall silent and the user would be left waiting, which must never happen. Every reply must be a complete conversational turn that hands the floor back to the user.
 You may ask the user a question, including for a detail like a reservation number or confirmation code if it fits your role — but NEVER block the conversation waiting on it. Whatever the user gives you, accept it warmly and carry straight on; if they don't have it, wave it off as no problem and continue. Never refuse to proceed until you get a particular piece of information, and never go quiet.
 
+--- KEEP THE CONVERSATION OPEN ---
+After you help with something or answer a question, do NOT wrap things up or give a closing/farewell line. Keep the conversation going by warmly inviting more — e.g. "Is there anything else I can help you with?", "Anything else you'd like to know?", or a friendly follow-up question. Never say things like "enjoy your stay", "have a great day", or "take care" until the user themselves signals they are finished. Assume the user still has more to talk about unless they clearly say otherwise.
+
 --- ENDING THE CONVERSATION ---
-Do not try to end the conversation yourself or rush the user along. But when the USER clearly signals they are finished — they say goodbye, thank you and nothing more, "that's all", "I'm done", or otherwise wrap things up — then give a short, warm, in-character farewell (one sentence) and append the exact tag <END> to the very end of that farewell. Only ever use the <END> tag on such a closing farewell, never in the middle of an ongoing conversation. Do not explain the tag or say the word "end"; just place <END> as the final characters of your closing message.
+Only when the USER clearly signals they are finished — they say goodbye, "that's all", "I'm done", "nothing else", or similar — give a short, warm, in-character farewell (one sentence) and append the exact tag <END> to the very end of it. Only ever use the <END> tag on such a closing farewell, never in the middle of an ongoing conversation. Do not explain the tag or say the word "end"; just place <END> as the final characters of your closing message.
 """
 
 # Marker an agent appends to its final farewell when the user has wrapped up the
@@ -74,6 +77,48 @@ def dynamic_import(module_name, function_names):
             raise ImportError(f"Function {func_name} not found in module {module_name}")
 
     return functions
+
+
+# Phrases that signal the USER is wrapping up. Detected server-side as a
+# fallback so ending the conversation doesn't depend solely on the LLM emitting
+# the <END> tag (which it does unreliably). conversation_over only reveals the
+# device's "Done" button — it does not force-end the round — so a slightly eager
+# match is cheap: the subject can simply keep talking and ignore Done.
+_USER_GOODBYE_PHRASES = (
+    "goodbye",
+    "good bye",
+    "bye",
+    "that's all",
+    "thats all",
+    "that is all",
+    "i'm done",
+    "im done",
+    "i am done",
+    "nothing else",
+    "no thanks",
+    "no thank you",
+    "that's it",
+    "thats it",
+    "that will be all",
+    "see you",
+    "take care",
+    "have a good",
+    "thanks for your help",
+    "thank you for your help",
+)
+
+
+def user_signalled_done(user_input: str) -> bool:
+    """True when the user's message reads as wrapping up the conversation."""
+    if not user_input:
+        return False
+    text = user_input.strip().lower()
+    # Bare thanks ("thanks", "thank you") on its own is a common close, but
+    # mid-conversation "thanks!" is not — only treat a SHORT thanks-only message
+    # as a goodbye, so "thanks, and what time is breakfast?" stays open.
+    if text.rstrip(" .!") in ("thanks", "thank you", "ty"):
+        return True
+    return any(phrase in text for phrase in _USER_GOODBYE_PHRASES)
 
 
 def remove_text_between_symbols(input_string):
@@ -217,8 +262,14 @@ class ConversationHandler:
     def process_user_message(self, role: str, user_input: str):
         agent: Agent = self.agents[role]
         agent.add_user_message(user_input)
-        response = agent.generate_response()  # (text, next_task, conversation_over)
-        return response
+        text, next_task, over_from_tag = agent.generate_response()
+        # End the conversation if EITHER the agent emitted the <END> tag OR the
+        # user's own message reads as a goodbye — the server-side phrase check is
+        # the reliable fallback for when the LLM forgets the tag.
+        conversation_over = over_from_tag or user_signalled_done(user_input)
+        if conversation_over and not over_from_tag:
+            print(f">> user goodbye detected for {role}: {user_input!r}")
+        return text, next_task, conversation_over
 
     def check_for_state_transition(self, role: str) -> str:
         agent: Agent = self.agents[role]

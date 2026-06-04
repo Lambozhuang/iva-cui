@@ -29,6 +29,16 @@ public class StudyControls : MonoBehaviour
 
     public static bool someoneIsThinking = false;
 
+    // QoE thesis: the conversation gate. The subject is teleported in front of an
+    // agent and must read a short on-HUD context briefing, then press "Start"
+    // before they can talk — and the timed measurement window begins at that same
+    // press. While the gate is closed the mic is blocked in BOTH pipelines (this
+    // zone pipeline and TrainingSceneController's). QoeDeviceClient owns this:
+    // it closes the gate on teleport (briefing shown) and opens it on Start, then
+    // closes it again at end-of-run. Defaults open so a scene opened without the
+    // device client still behaves normally.
+    public static bool conversationGateOpen = true;
+
     // QoE thesis: conversations are standalone, timed one-offs (no linear quest).
     // When true, the LLM "transition" signal is ignored — no path arrows, no
     // inventory changes, no survey pop-ups, no scene-progression. This is what
@@ -265,6 +275,14 @@ public class StudyControls : MonoBehaviour
     {
         if (!microphoneHandler.IsRecording)
         {
+            // Conversation gate (QoE): the subject hasn't pressed "Start" yet
+            // (still reading the briefing) or the run has ended. Stay silent —
+            // this isn't a mic failure, so don't play the "unavailable" sound.
+            if (!conversationGateOpen)
+            {
+                return;
+            }
+
             if (AgentSelectionController.currentZone == null)
             {
                 Debug.LogWarning("No active zone. NOT activating mic.");

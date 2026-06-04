@@ -27,7 +27,10 @@ namespace QoeDevice {
 
     public class WsEnvelope { public string type; public JObject data; }
 
-    public enum DevicePhase { Idle, LoadingTask, TaskReceived, RunningTask }
+    // Briefing sits between teleport and the timed run: the subject has been
+    // placed in front of the agent and is reading the on-HUD context, with the
+    // conversation gated closed, until they press Start.
+    public enum DevicePhase { Idle, LoadingTask, TaskReceived, Briefing, RunningTask }
 
     public class QoeDeviceClient : MonoBehaviour {
         [Header("Server")]
@@ -109,7 +112,7 @@ namespace QoeDevice {
         readonly ConcurrentQueue<Action> mainQ = new();
 
         readonly QoeUI ui = new();
-        PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton;
+        PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton, startButton;
 
         static readonly string[] kTaskLabels = {
             "Training", "Task 1", "Task 2", "Task 3", "Task 4",
@@ -128,6 +131,33 @@ namespace QoeDevice {
             "Museum", "Museum", "Museum",// 7–9 Museum: host, volunteer1, volunteer2
         };
 
+        // Pre-conversation context shown on the HUD after teleport, by task index.
+        // Sets the scene for the subject (who they're standing in front of and
+        // roughly what to chat about) without scripting the conversation — the
+        // agents are open-ended one-offs. Kept to 1–2 short sentences so it reads
+        // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
+        static readonly string[] kTaskBriefings = {
+            // 0 Training
+            "You're in a practice area with Alfred, a friendly assistant. Say hello and chat with him to get comfortable talking to a virtual agent — ask anything you like about the VR controls.",
+            // 1–3 City (Shirts)
+            "You're at your friend Sage's place, just hanging out. Catch up with them and chat about whatever comes to mind.",
+            "You're in a clothing store, talking to Niko, the shop clerk. Strike up a conversation — ask about the store or whatever you're curious about.",
+            "You're at the back of a clothing store, talking to the store manager. Have a conversation about the store or anything you like.",
+            // 4–6 Hotel
+            "You're at the front desk of Hotel 333, talking to Hazel, the receptionist. Chat with them about your stay, the hotel, or the area.",
+            "You're on the hotel floor, talking to Justin, a maintenance worker on a break. Make conversation about the hotel or his work.",
+            "You're at the hotel's restaurant, talking to Luka, the waiter. Chat about the food, the restaurant, or whatever you'd like.",
+            // 7–9 Museum
+            "You're at the entrance of the Millennium Museum, talking to Emma, the receptionist. Ask about visiting the museum or just make conversation.",
+            "You're at the Cyrus cylinder exhibit, talking to Aleksander, a volunteer. Chat with him about the exhibit or whatever interests you.",
+            "You're at the civil rights exhibit, talking to Tammy, a volunteer. Have a conversation about the exhibit or anything you're curious about.",
+        };
+
+        string BriefingFor(int taskIndex) {
+            if (taskIndex >= 0 && taskIndex < kTaskBriefings.Length) return kTaskBriefings[taskIndex];
+            return "Press Start when you're ready to begin talking with the agent in front of you.";
+        }
+
         static readonly Color kBlue         = new(0.16f, 0.5f,  0.95f);
         static readonly Color kGray         = new(0.55f, 0.55f, 0.6f);
         static readonly Color kGreen        = new(0.2f,  0.7f,  0.35f);
@@ -139,6 +169,8 @@ namespace QoeDevice {
 
         TMP_Text logText;
         TMP_Text timerText;
+        TMP_Text briefingText;
+        GameObject briefingGo;
         Image    micDot;
         TMP_Text micLabel;
         TMP_Text connStatusText;
@@ -194,6 +226,7 @@ namespace QoeDevice {
             BuildConnStatus(rootContainer);
             BuildControlsCluster(rootContainer);
             BuildCenterRegion(rootContainer);
+            BuildBriefingPanel(rootContainer);
             BuildErrorBanner(rootContainer);
             if (debugMode) BuildTaskGrid(rootContainer, rootW, rootH);
             if (debugMode) BuildLogPanel(rootContainer);
@@ -215,8 +248,14 @@ namespace QoeDevice {
 
             bool ratingVisible = ratingClient != null && ratingClient.IsFormVisible;
             bool running       = phase == DevicePhase.RunningTask;
+            bool briefing      = phase == DevicePhase.Briefing;
             bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
             bool taskReceived  = phase == DevicePhase.TaskReceived;
+
+            // Pre-conversation briefing panel — only while the subject is reading
+            // the context, before they press Start. The debug Task buttons enter
+            // Briefing too, so manual testing shows it exactly like a real run.
+            if (briefingGo != null) briefingGo.SetActive(briefing);
 
             // Mic indicator + timer cluster — shown while a task is running. The
             // debug Task buttons enter RunningTask too (DebugStartTask), so this
@@ -232,7 +271,7 @@ namespace QoeDevice {
             SetActive(sendReadyButton,     debugMode || (taskReceived && !ratingVisible));
             SetActive(endRunEarlyButton,   debugMode || running);
             SetActive(previewRatingButton, debugMode);
-            if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running);
+            if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running || briefing);
         }
 
         static void SetActive(PressDownButton b, bool on) {
@@ -277,8 +316,8 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = null;
-            timerText = null; micDot = null; micLabel = null; centerRegion = null;
+            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = null;
+            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -375,6 +414,35 @@ namespace QoeDevice {
             QoeUI.StretchToParent((RectTransform)errorText.transform);
         }
 
+        // Pre-conversation briefing: a centered panel with the per-task context
+        // text and a big Start button. Shown only during the Briefing phase (after
+        // teleport, before the timed run). Pressing Start opens the conversation
+        // gate and begins the timer — see OnStartPressed. Built separately from
+        // the rating client's center region so neither clobbers the other.
+        void BuildBriefingPanel(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.14f, 0.2f), new Vector2(0.86f, 0.82f), ui.Sx(6));
+            briefingGo = region.gameObject;
+            var bg = region.gameObject.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.55f);
+
+            var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(14);
+            vlg.padding = new RectOffset(ui.Sx(18), ui.Sx(18), ui.Sx(18), ui.Sx(18));
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.MiddleCenter;
+
+            briefingText = ui.BuildLabel(region, "", 18, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
+            briefingText.enableWordWrapping = true;
+            var tle = briefingText.gameObject.AddComponent<LayoutElement>();
+            tle.flexibleHeight = 1f;
+
+            startButton = ui.BuildButton(region, "Start", kGreen, 20, OnStartPressed);
+            var sle = startButton.GetComponent<LayoutElement>();
+            int sh = ui.Sx(46);
+            sle.minHeight = sh; sle.preferredHeight = sh; sle.flexibleHeight = 0f;
+        }
+
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
             const float gridFracW = 0.72f;
             var region = ui.BuildAnchoredRegion(parent, "TaskGrid", new Vector2(0f, 0f), new Vector2(gridFracW, 0.16f), ui.Sx(6));
@@ -421,6 +489,7 @@ namespace QoeDevice {
 
         public void DisconnectManual() {
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            StudyControls.conversationGateOpen = true; // don't leave the scene mic-locked
             CloseWsIntentional();
             TransitionPhase(DevicePhase.Idle);
             SetHud("Disconnected — press Connect");
@@ -441,7 +510,30 @@ namespace QoeDevice {
             SendJson(new { type = WsType.Ready });
             CloseWsIntentional();
             if (ratingClient != null) ratingClient.CloseWs();
+            // Show the briefing and wait for the subject to press Start before the
+            // timed run begins (and before the conversation is un-gated).
+            EnterBriefing();
+        }
+
+        // Place the subject in the briefing phase: conversation gated closed, the
+        // per-task context shown on the HUD, timer not yet running. Shared by the
+        // real WS path and the debug Task buttons so both behave identically.
+        // OnStartPressed begins the actual timed run.
+        void EnterBriefing() {
+            StudyControls.conversationGateOpen = false;
+            if (briefingText != null) briefingText.text = BriefingFor(activeTaskIndex);
+            TransitionPhase(DevicePhase.Briefing);
+            QoeLog.Event("task", $"briefing shown for '{activeLabel}' — waiting for Start");
+        }
+
+        // Start button: the subject has read the context and is ready to talk.
+        // Opens the conversation gate and starts the timed measurement window.
+        public void OnStartPressed() {
+            if (phase != DevicePhase.Briefing) return;
+            StudyControls.conversationGateOpen = true;
+            QoeLog.Event("task", $"Start pressed — conversation open, timing '{activeLabel}'");
             TransitionPhase(DevicePhase.RunningTask);
+            if (runCo != null) { StopCoroutine(runCo); }
             runCo = StartCoroutine(RunTaskThenEnd());
         }
 
@@ -460,8 +552,9 @@ namespace QoeDevice {
             maxDurationS   = Mathf.Max(1, debugRunDurationS);
             QoeLog.Event("task", $"DEBUG run start: '{activeLabel}' index={taskIndex} duration={maxDurationS}s");
             TeleportToTask(taskIndex);
-            TransitionPhase(DevicePhase.RunningTask);
-            runCo = StartCoroutine(RunTaskThenEnd());
+            // Same as a real run: show the briefing and gate the conversation
+            // until Start is pressed (OnStartPressed begins the timer).
+            EnterBriefing();
         }
 
         void Update() {
@@ -678,6 +771,9 @@ namespace QoeDevice {
         // history so a re-run of the same agent starts fresh and any in-flight
         // LLM/TTS reply is discarded. Same path for debug and real runs.
         void EndConversationCleanup() {
+            // Close the conversation gate so the mic is dead the instant the run
+            // ends — covers the gap between end-of-run and the next briefing.
+            StudyControls.conversationGateOpen = false;
             LLMAgents.AgentSelectionController.StopAllAgents();
             TrainingSceneController.StopAudio();
             if (StudyControls.instance != null) StudyControls.instance.ResetConversationState();
@@ -742,9 +838,10 @@ namespace QoeDevice {
         }
 
         public void AbandonRun() {
-            if (phase != DevicePhase.RunningTask && phase != DevicePhase.TaskReceived && phase != DevicePhase.LoadingTask) return;
+            if (phase != DevicePhase.RunningTask && phase != DevicePhase.TaskReceived && phase != DevicePhase.LoadingTask && phase != DevicePhase.Briefing) return;
             QoeLog.Warn("task", $"abandon run {activeRunId} '{activeLabel}' phase={phase} — /end-condition NOT sent");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            StudyControls.conversationGateOpen = true; // don't leave the scene mic-locked
             TeleportToNeutral();
             SetHud("Run abandoned locally");
             TransitionPhase(DevicePhase.Idle);
@@ -827,6 +924,7 @@ namespace QoeDevice {
             SetBtn(connectButton,     phase == DevicePhase.Idle && !isConnecting && !wsOpen);
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
+            SetBtn(startButton,       phase == DevicePhase.Briefing);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();
         }

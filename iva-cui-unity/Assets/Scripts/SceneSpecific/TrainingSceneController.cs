@@ -265,6 +265,13 @@ public class TrainingSceneController : MonoBehaviour
     {
         if (!microphoneHandler.IsRecording)
         {
+            // Conversation gate (QoE): subject hasn't pressed "Start" yet, or the
+            // run has ended. Stay silent — mirrors StudyControls' zone pipeline.
+            if (!StudyControls.conversationGateOpen)
+            {
+                return;
+            }
+
             if (isThinking || botAudioSource.isPlaying)
             {
                 microphoneHandler.PlayMicUnavailableSound();

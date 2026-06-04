@@ -133,24 +133,30 @@ namespace QoeDevice {
         static readonly Color kMicRecording = new(0.9f, 0.2f, 0.2f);
         static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
 
-        TMP_Text hudText;          // debug-only verbose status line (top-center)
         TMP_Text logText;          // debug-only log (bottom-right)
-        TMP_Text timerText;        // task countdown (top-left, both modes)
-        Image    micDot;           // mic indicator next to the timer
-        TMP_Text connStatusText;   // minimal connection status (top-right, non-debug)
+        TMP_Text timerText;        // task countdown (top-left)
+        Image    micDot;           // recording light, left of the timer
+        TMP_Text micLabel;         // "REC" caption beside the dot while recording
+        // Single status line, top-right above the controls, in BOTH modes:
+        // verbose operator detail in debug (fed by SetHud), minimal
+        // Connected/Connecting/Disconnected in non-debug (RefreshConnStatus).
+        TMP_Text connStatusText;
         TMP_Text errorText;        // center error banner (non-debug)
-        GameObject hudGo;          // top-center status (debug only)
         GameObject topLeftGo;      // timer + mic cluster
         GameObject controlsGo;     // connect/disconnect/ready/end cluster (top-right)
         GameObject taskGridGo;     // Training + Task 1–9 grid (bottom, debug only)
         GameObject logPanelGo;     // log window (bottom-right, debug only)
-        GameObject connStatusGo;   // connection-status line (non-debug only)
+        GameObject connStatusGo;   // connection-status line (top-right, both modes)
         GameObject errorGo;        // center error banner (non-debug only)
         RectTransform centerRegion;// rating UI + (later) pre-convo prompt
         MicrophoneHandler micHandler;
         // Friendly, short connection-error message for the subject-facing UI.
         // Empty = no error. The verbose detail still goes to the debug hud/log.
         string lastError = "";
+        // Last verbose status string handed to SetHud. Re-applied to the status
+        // line after a rebuild (debug mode) so the operator detail survives a
+        // BuildUi without waiting for the next state change.
+        string lastHud = "";
 
         // ── Lifecycle ────────────────────────────────────────────────────
         void OnEnable()  { Application.logMessageReceived += OnUnityLog; }
@@ -177,18 +183,22 @@ namespace QoeDevice {
         // the canvas). Regions are placed by fractional anchors so they scale
         // with the canvas. Layout (debug mode shows all of it):
         //
-        //   ┌ TL: mic+timer ─┬ TC: status ─┬ TR: controls ┐
-        //   │                              │  Connect      │
-        //   │        CENTER                │  Disconnect   │
-        //   │   (rating / pre-convo prompt)│  Ready        │
-        //   │                              │  End Run      │
-        //   ├ task grid (Training, 1–9) ───┴─ log window ──┤
-        //   └──────────────────────────────────────────────┘
+        //   ┌ TL: mic+timer ──────────────┬ TR: status line ┐
+        //   │                             │  Connect        │
+        //   │        CENTER               │  Disconnect     │
+        //   │   (rating / pre-convo prompt)│  Ready         │
+        //   │                             │  End Run        │
+        //   ├ task grid (Training, 1–9) ──┴─── log window ──┤
+        //   └─────────────────────────────────────────────┘
         //
-        // Non-debug mode strips it to the essentials: mic+timer (during a task),
-        // the single relevant control button top-right (Connect / Ready / End,
-        // shown only when its action is valid), and the center rating form. No
-        // status text, no log, no task grid, no titles/labels.
+        // The connection-status line lives in the top-right corner ABOVE the
+        // control buttons in BOTH modes — verbose operator detail in debug,
+        // minimal Connected/Connecting/Disconnected for the subject otherwise.
+        //
+        // Non-debug mode strips the rest to the essentials: mic+timer (during a
+        // task), the single relevant control button top-right (Connect / Ready /
+        // End, shown only when its action is valid), and the center rating form.
+        // No log, no task grid, no titles/labels.
         void BuildUi() {
             if (rootContainer == null) {
                 QoeLog.Err("ui", "rootContainer not assigned — cannot build device UI");
@@ -214,9 +224,8 @@ namespace QoeDevice {
             float rootH = rootContainer.rect.height;
             ui.scale = rootW > 0 ? Mathf.Clamp(rootW / 600f, 0.05f, 4f) : 1f;
 
-            BuildTopLeftCluster(rootContainer);   // mic dot + timer
-            BuildHud(rootContainer);              // verbose status text (debug only)
-            BuildConnStatus(rootContainer);       // minimal conn status (non-debug)
+            BuildTopLeftCluster(rootContainer);   // mic light + timer
+            BuildConnStatus(rootContainer);       // status line (top-right, both modes)
             BuildControlsCluster(rootContainer);  // connect/disconnect/ready/end
             BuildCenterRegion(rootContainer);     // rating + (later) prompt
             BuildErrorBanner(rootContainer);      // center error text (non-debug)
@@ -230,6 +239,9 @@ namespace QoeDevice {
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(rootContainer);
             AttachCanvasFollower();
+            // Repaint the freshly-built status line with whatever we last showed
+            // (debug verbose) before falling through to state-derived updates.
+            if (connStatusText != null && debugMode) connStatusText.text = lastHud;
             UpdateButtonStates();
             UpdateUiVisibility();
         }
@@ -253,14 +265,12 @@ namespace QoeDevice {
 
             // Timer + mic: meaningful only during a task, in both modes.
             if (topLeftGo  != null) topLeftGo.SetActive(running);
-            // Verbose status / log / task grid: debug only.
-            if (hudGo      != null) hudGo.SetActive(debugMode);
+            // Log / task grid: debug only.
             if (logPanelGo != null) logPanelGo.SetActive(debugMode);
             if (taskGridGo != null) taskGridGo.SetActive(debugMode);
-            // Minimal connection status (top-right) + error banner (center):
-            // non-debug only. The error banner appears only when there's an
-            // error to show.
-            if (connStatusGo != null) connStatusGo.SetActive(!debugMode);
+            // Connection status line (top-right): both modes. Error banner
+            // (center): non-debug only, and only when there's an error to show.
+            if (connStatusGo != null) connStatusGo.SetActive(true);
             if (errorGo      != null) errorGo.SetActive(!debugMode && !string.IsNullOrEmpty(lastError));
 
             // Controls. Debug shows all four (enabled state handled separately);
@@ -335,31 +345,45 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            hudGo = topLeftGo = controlsGo = taskGridGo = logPanelGo = null;
-            timerText = null; micDot = null; centerRegion = null;
+            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = null;
+            timerText = null; micDot = null; micLabel = null; centerRegion = null;
         }
 
         // ── Corner regions ─────────────────────────────────────────────────
-        // Top-left: mic indicator dot + task countdown timer. Shown in BOTH
-        // modes, but only while a task is running (UpdateUiVisibility gates it).
+        // Top-left: recording indicator (light + "REC" caption) followed by the
+        // task countdown timer. Shown in BOTH modes, but only while a task is
+        // running (UpdateUiVisibility gates it). This is our own mic indicator —
+        // it replaces the old hand-tracked "mic_active_object" widgets, so we can
+        // delete those without losing the recording cue. The light tracks
+        // MicrophoneHandler.IsRecording (see UpdateMicDot): dim when idle, solid
+        // red with the "REC" caption while the subject is holding to talk.
         void BuildTopLeftCluster(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0f, 0.84f), new Vector2(0.4f, 1f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0f, 0.84f), new Vector2(0.42f, 1f), ui.Sx(6));
             topLeftGo = region.gameObject;
             var hg = region.gameObject.AddComponent<HorizontalLayoutGroup>();
-            hg.spacing = ui.Sx(8);
+            hg.spacing = ui.Sx(6);
             hg.childForceExpandWidth = false; hg.childForceExpandHeight = true;
             hg.childControlWidth = true; hg.childControlHeight = true;
             hg.childAlignment = TextAnchor.MiddleLeft;
 
-            // Mic dot — a small square Image whose color tracks IsRecording.
+            // Recording light — a small square whose color tracks IsRecording.
             var dotGo = new GameObject("MicDot", typeof(RectTransform), typeof(Image));
             dotGo.transform.SetParent(region, false);
             micDot = dotGo.GetComponent<Image>();
             micDot.color = kMicIdle;
             var dotLe = dotGo.AddComponent<LayoutElement>();
-            int dot = ui.Sx(20);
+            int dot = ui.Sx(18);
             dotLe.minWidth = dot; dotLe.preferredWidth = dot; dotLe.flexibleWidth = 0;
             dotLe.minHeight = dot; dotLe.preferredHeight = dot; dotLe.flexibleHeight = 0;
+
+            // "REC" caption — hidden until recording, then shown next to the light
+            // so the recording state is unmistakable, not just a color shift.
+            micLabel = ui.BuildLabel(region, "REC", 13, FontStyles.Bold, kMicRecording, TextAlignmentOptions.Left);
+            micLabel.enableWordWrapping = false;
+            var mle = micLabel.gameObject.AddComponent<LayoutElement>();
+            mle.minWidth = ui.Sx(24); mle.preferredWidth = ui.Sx(24); mle.flexibleWidth = 0;
+            mle.minHeight = ui.Sx(18); mle.preferredHeight = ui.Sx(18);
+            micLabel.gameObject.SetActive(false);
 
             timerText = ui.BuildLabel(region, "", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
             timerText.enableWordWrapping = false;
@@ -367,30 +391,25 @@ namespace QoeDevice {
             tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
         }
 
-        // Top-center: verbose status text. Debug only — non-debug shows no
-        // verbose text at all (it gets the minimal connStatus line instead).
-        void BuildHud(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Status", new Vector2(0.4f, 0.86f), new Vector2(0.72f, 1f), ui.Sx(4));
-            hudText = ui.BuildLabel(region, "", 16, FontStyles.Bold, new Color(0.55f, 0.7f, 1f), TextAlignmentOptions.Top);
-            hudText.enableWordWrapping = true;
-            hudGo = hudText.gameObject;
-            QoeUI.StretchToParent((RectTransform)hudText.transform);
-        }
-
-        // Top-right corner: a minimal one-line connection status for the
-        // subject-facing (non-debug) build — e.g. "Connected", "Connecting…",
-        // "Disconnected". Right-aligned so it tucks into the corner. The Connect
-        // button hides itself once connected; this line is what the subject sees
-        // in its place. Debug mode keeps the verbose hud instead, so this stays
-        // hidden there (UpdateUiVisibility).
+        // Top-right corner, above the control buttons: the single status line,
+        // shown in BOTH modes (the placement the user asked for — same spot in
+        // debug and non-debug). The control column starts just below this strip
+        // (see BuildControlsCluster) so the two never collide.
+        //
+        //   • debug   → verbose operator detail, fed by SetHud (light blue).
+        //   • normal  → minimal Connected / Connecting… / Disconnected, derived
+        //               from the live socket state by RefreshConnStatus (gray).
+        //
+        // One text object serves both: SetHud only writes it in debug,
+        // RefreshConnStatus only writes it in non-debug, so they never fight.
         void BuildConnStatus(RectTransform parent) {
-            // Thin strip across the very top-right. In non-debug the controls
-            // column starts just below this (see BuildControlsCluster), so the
-            // status line and the Connect button never collide.
-            var region = ui.BuildAnchoredRegion(parent, "ConnStatus", new Vector2(0.55f, 0.9f), new Vector2(1f, 1f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "ConnStatus", new Vector2(0.44f, 0.88f), new Vector2(1f, 1f), ui.Sx(4));
             connStatusGo = region.gameObject;
-            connStatusText = ui.BuildLabel(region, "", 13, FontStyles.Normal, new Color(0.6f, 0.65f, 0.72f), TextAlignmentOptions.Right);
-            connStatusText.enableWordWrapping = false;
+            Color c = debugMode ? new Color(0.55f, 0.7f, 1f) : new Color(0.6f, 0.65f, 0.72f);
+            connStatusText = ui.BuildLabel(region, "", 13, FontStyles.Bold, c, TextAlignmentOptions.TopRight);
+            // Debug status sentences can run long; let them wrap rather than
+            // clip. Non-debug strings are one short word and fit on the line.
+            connStatusText.enableWordWrapping = true;
             connStatusText.overflowMode = TextOverflowModes.Ellipsis;
             QoeUI.StretchToParent((RectTransform)connStatusText.transform);
         }
@@ -400,17 +419,30 @@ namespace QoeDevice {
         // controls are present (enabled/dimmed per phase). In normal mode only
         // the single valid action is shown (UpdateUiVisibility), so the stack
         // reads as one button at the top-right.
+        //
+        // The status line owns the very top strip (y≥0.88) in both modes, so the
+        // column starts below it. Debug packs 5 buttons into the band between the
+        // status strip and the log panel; non-debug shows one button in a thin
+        // band just under the status line. Buttons use min + flexible height (not
+        // a fixed pixel height) so they distribute to fill whatever band the mode
+        // gives them — this keeps them fitting at the panel's small effective
+        // scale instead of overflowing into the log or status.
+        //
+        // In non-debug the column's box can clip the top-right corner of the wide
+        // center region, but the two are mutually exclusive in time: the single
+        // action button (Connect/Ready/End) only shows when there's no rating
+        // form up, and the center carries no rating content while a button is
+        // visible — so they never paint over each other.
         void BuildControlsCluster(RectTransform parent) {
-            // Debug needs the full-height right column (5 buttons above the log).
-            // Non-debug shows at most one button, and the conn-status strip owns
-            // the very top-right — so start the column below that strip to avoid
-            // overlapping it.
-            float topAnchor = debugMode ? 0.42f : 0.78f;
-            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, topAnchor), new Vector2(1f, debugMode ? 1f : 0.9f), ui.Sx(6));
+            // Debug: column spans from just under the status strip down to just
+            // above the log panel (log tops out at 0.40). Non-debug: a thin band
+            // under the status line for the single visible action button.
+            float topAnchor = debugMode ? 0.42f : 0.72f;
+            var region = ui.BuildAnchoredRegion(parent, "Controls", new Vector2(0.78f, topAnchor), new Vector2(1f, 0.86f), ui.Sx(4));
             controlsGo = region.gameObject;
             var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
-            vlg.spacing = ui.Sx(5);
-            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.spacing = ui.Sx(4);
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = true;
             vlg.childControlWidth = true; vlg.childControlHeight = true;
             vlg.childAlignment = TextAnchor.UpperCenter;
 
@@ -418,10 +450,10 @@ namespace QoeDevice {
             disconnectButton  = ui.BuildButton(region, "Disconnect", kGray,  16, DisconnectManual);
             sendReadyButton   = ui.BuildButton(region, "Ready",      kGreen, 16, SendReadyManual);
             endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   16, EndRunEarly);
-            int btnH = ui.Sx(30);
+            int btnH = ui.Sx(22);
             foreach (var b in new[] { connectButton, disconnectButton, sendReadyButton, endRunEarlyButton }) {
                 var le = b.GetComponent<LayoutElement>();
-                le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 0;
+                le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 1f;
             }
 
             // Preview rating — debug-only helper that loads the rating debug
@@ -430,8 +462,8 @@ namespace QoeDevice {
             if (debugMode && ratingClient != null) {
                 previewRatingButton = ui.BuildButton(region, "Preview rating", kPreview, 14, ratingClient.LoadDebugPreview);
                 var le = previewRatingButton.GetComponent<LayoutElement>();
-                int ph = ui.Sx(26);
-                le.minHeight = ph; le.preferredHeight = ph; le.flexibleHeight = 0;
+                int ph = ui.Sx(20);
+                le.minHeight = ph; le.preferredHeight = ph; le.flexibleHeight = 1f;
             }
         }
 
@@ -565,14 +597,19 @@ namespace QoeDevice {
             UpdateMicDot();
         }
 
-        // Mirror the mic state onto the indicator dot. Cheap enough to poll each
-        // frame; only touches the Image when the color actually changes.
+        // Mirror the mic state onto our recording indicator — the light turns
+        // solid red and the "REC" caption appears while MicrophoneHandler is
+        // recording, idle gray otherwise. This is the replacement for the old
+        // hand-tracked "mic_active_object" widgets. Cheap enough to poll each
+        // frame; only touches the UI when the state actually changes.
         void UpdateMicDot() {
             if (micDot == null) return;
             if (micHandler == null) micHandler = FindObjectOfType<MicrophoneHandler>();
             bool recording = micHandler != null && micHandler.IsRecording;
             var want = recording ? kMicRecording : kMicIdle;
             if (micDot.color != want) micDot.color = want;
+            if (micLabel != null && micLabel.gameObject.activeSelf != recording)
+                micLabel.gameObject.SetActive(recording);
         }
 
         async void OnDestroy() {
@@ -900,20 +937,26 @@ namespace QoeDevice {
             b.interactable = enabled;
         }
 
-        // Verbose status line — debug hud only. Also nudges the minimal
-        // connection-status corner text, which is derived from connection state
-        // rather than the verbose string.
+        // Status line text. One TMP object in the top-right serves both modes,
+        // so the two writers are mutually exclusive by mode and never clobber
+        // each other:
+        //   • SetHud           → debug only: the verbose operator string.
+        //   • RefreshConnStatus → non-debug only: the minimal subject status.
+        // SetHud is called from many places with rich detail; in non-debug we
+        // simply ignore its argument and let RefreshConnStatus own the line.
         void SetHud(string s) {
-            if (hudText != null) hudText.text = s;
+            lastHud = s ?? "";
+            if (connStatusText != null && debugMode) connStatusText.text = lastHud;
             RefreshConnStatus();
         }
 
         // Minimal, subject-facing connection status for the top-right corner
         // (non-debug). Derived from the live WS state so it stays correct no
         // matter which code path changed things. Never surfaces internals — just
-        // Connected / Connecting… / Disconnected.
+        // Connected / Connecting… / Disconnected. No-op in debug, where SetHud
+        // owns the same line with the verbose string.
         void RefreshConnStatus() {
-            if (connStatusText == null) return;
+            if (connStatusText == null || debugMode) return;
             string s;
             if (IsWsOpen)            s = "Connected";
             else if (isConnecting)   s = "Connecting…";

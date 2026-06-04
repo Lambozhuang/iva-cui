@@ -333,10 +333,38 @@ public class StudyControls : MonoBehaviour
             AgentSelectionController.currentZone?.SetThinkingStatus(waitIndicatorType, true);
 
             someoneIsThinking = true;
+            StartThinkingTimeout();
 
             var audioBytes = microphoneHandler.GetLatestMicAudioBytes();
             SendASRRequest(audioBytes);
         }
+    }
+
+    // Stuck-mic guard. someoneIsThinking is set when the user finishes speaking
+    // and is normally cleared on the success path (AgentSelectionController
+    // .PlayAgentResponseAfterDelay). Under network impairment (netem loss/delay),
+    // any failed ASR/TTS/download leaves it stuck true and the mic blocked
+    // forever. This timeout resets it (and the agent's thinking indicator) so the
+    // subject can talk again. Mirrors TrainingSceneController's ThinkingTimeout.
+    private Coroutine thinkingTimeoutCoroutine;
+    private const float kThinkingTimeoutSeconds = 30f;
+
+    private void StartThinkingTimeout()
+    {
+        if (thinkingTimeoutCoroutine != null) StopCoroutine(thinkingTimeoutCoroutine);
+        thinkingTimeoutCoroutine = StartCoroutine(ThinkingTimeout());
+    }
+
+    private System.Collections.IEnumerator ThinkingTimeout()
+    {
+        yield return new WaitForSeconds(kThinkingTimeoutSeconds);
+        if (someoneIsThinking)
+        {
+            Debug.LogWarning("StudyControls: thinking timeout — resetting mic (response never arrived).");
+            someoneIsThinking = false;
+            AgentSelectionController.currentZone?.SetThinkingStatus(waitIndicatorType, false);
+        }
+        thinkingTimeoutCoroutine = null;
     }
 
     public void SendASRRequest(byte[] audioBytes)

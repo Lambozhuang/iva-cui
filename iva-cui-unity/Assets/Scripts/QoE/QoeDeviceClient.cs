@@ -264,7 +264,7 @@ namespace QoeDevice {
             // Connection status line (top-right): both modes. Error banner
             // (center): non-debug only, and only when there's an error to show.
             if (connStatusGo != null) connStatusGo.SetActive(true);
-            if (errorGo      != null) errorGo.SetActive(!debugMode && !string.IsNullOrEmpty(lastError));
+            if (errorGo      != null) errorGo.SetActive(!string.IsNullOrEmpty(lastError));
 
             // Controls. Debug shows all four (enabled state handled separately);
             // normal shows only the one button whose action is currently valid,

@@ -367,6 +367,24 @@ public class StudyControls : MonoBehaviour
         thinkingTimeoutCoroutine = null;
     }
 
+    // Reset the mic/thinking pipeline at the end of a QoE run. Clears the
+    // "someone is thinking" gate and stops the stuck-mic timeout so a late
+    // response from the run that just ended can't flip state during the next
+    // run. Called from QoeDeviceClient's end-of-run cleanup.
+    public void ResetConversationState()
+    {
+        someoneIsThinking = false;
+        if (thinkingTimeoutCoroutine != null)
+        {
+            StopCoroutine(thinkingTimeoutCoroutine);
+            thinkingTimeoutCoroutine = null;
+        }
+        if (microphoneHandler != null && microphoneHandler.IsRecording)
+        {
+            microphoneHandler.StopRecording();
+        }
+    }
+
     public void SendASRRequest(byte[] audioBytes)
     {
         StartCoroutine(test_ServerInterface.UploadAudioBytes(audioBytes, OnFinishASR));

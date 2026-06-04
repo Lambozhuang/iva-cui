@@ -159,5 +159,17 @@ namespace LLMAgents
 
             return false;
         }
+
+        // Cut every agent's audio immediately. Called at the end of a QoE run so a
+        // clip still playing when the timer expires (or the operator ends early)
+        // doesn't keep talking after the subject is teleported to neutral. Loops
+        // all zones (not just currentZone) because scene-culling may already have
+        // moved the player, and a previously-active zone could still be playing.
+        public static void StopAllAgents()
+        {
+            if (instance == null || instance.zones == null) return;
+            foreach (ActivationZone zone in instance.zones)
+                if (zone != null) zone.StopSpeaking();
+        }
     }
 }

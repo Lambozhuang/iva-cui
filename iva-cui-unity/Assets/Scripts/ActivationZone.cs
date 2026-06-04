@@ -276,6 +276,20 @@ public class ActivationZone : MonoBehaviour
         StartCoroutine(SetAgentBackToIdleAndLookAtPlayer(clipLength));
     }
 
+    // Hard-stop everything this agent is doing — used at the end of a QoE run so
+    // a clip that's still playing (e.g. a late response under high latency)
+    // doesn't keep talking from an empty spawn after the subject is teleported
+    // away. Cuts the response audio + any filler SFX, clears the thinking
+    // indicator, and stops the pending "back to idle" coroutine.
+    public void StopSpeaking()
+    {
+        StopAllCoroutines();
+        if (audioSource != null) audioSource.Stop();
+        if (fillerSfxAudioSource != null) fillerSfxAudioSource.Stop();
+        SetThinkingStatus(StudyControls.instance.waitIndicatorType, false);
+        animator?.SetBool("IsListening", false);
+    }
+
     private IEnumerator SetAgentBackToIdleAndLookAtPlayer(float clipLength)
     {
         yield return new WaitForSeconds(clipLength);

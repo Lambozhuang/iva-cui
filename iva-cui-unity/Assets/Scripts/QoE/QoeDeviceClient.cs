@@ -634,6 +634,7 @@ namespace QoeDevice {
                 yield return null;
             }
             SetTimer(0);
+            EndConversationCleanup();
             TeleportToNeutral();
             if (isDebugRun) {
                 QoeLog.Event("task", $"DEBUG task finished after {maxDurationS}s — no /end-condition");
@@ -657,6 +658,7 @@ namespace QoeDevice {
             QoeLog.Event("task", $"end run early: run {activeRunId} '{activeLabel}'");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
             SetTimer(0);
+            EndConversationCleanup();
             TeleportToNeutral();
             if (isDebugRun) {
                 SetHud("Debug run ended");
@@ -664,6 +666,27 @@ namespace QoeDevice {
             } else {
                 SetHud("Ending run early — calling /end-condition…");
                 StartCoroutine(PostEndCondition(activeSid));
+            }
+        }
+
+        // Hard-stop the conversation at the end of a run (timer expiry or End Run),
+        // before teleporting the subject to neutral. Three things, so each trial
+        // has a clean boundary: (1) cut every agent's audio so a clip still playing
+        // — likely under high latency — doesn't keep talking from an empty spawn;
+        // (2) reset the mic/thinking pipeline so a late response can't flip state
+        // into the next run; (3) refresh the backend scene to wipe conversation
+        // history so a re-run of the same agent starts fresh and any in-flight
+        // LLM/TTS reply is discarded. Same path for debug and real runs.
+        void EndConversationCleanup() {
+            LLMAgents.AgentSelectionController.StopAllAgents();
+            TrainingSceneController.StopAudio();
+            if (StudyControls.instance != null) StudyControls.instance.ResetConversationState();
+            if (activeTaskIndex >= 0 && activeTaskIndex < kTaskBackendScenes.Length) {
+                string backendScene = kTaskBackendScenes[activeTaskIndex];
+                ServerInterface.RefreshScene(backendScene);
+                QoeLog.Event("task", $"end-of-run cleanup: stopped agents, reset mic, refreshed backend scene '{backendScene}'");
+            } else {
+                QoeLog.Event("task", "end-of-run cleanup: stopped agents, reset mic (no backend scene to refresh)");
             }
         }
 

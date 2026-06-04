@@ -120,6 +120,24 @@ public class TrainingSceneController : MonoBehaviour
         }
     }
 
+    private static TrainingSceneController instance;
+
+    // Hard-stop the Training agent at end-of-run. Training uses its own audio
+    // path (botAudioSource) instead of the zone pipeline, so AgentSelectionController
+    // .StopAllAgents() doesn't reach it. Cut the clip and clear thinking state so a
+    // late reply can't keep talking after the subject is teleported to neutral.
+    public static void StopAudio()
+    {
+        if (instance == null) return;
+        if (instance.botAudioSource != null) instance.botAudioSource.Stop();
+        instance.ResetThinking();
+    }
+
+    private void Awake()
+    {
+        instance = this;
+    }
+
     private void Start()
     {
         // NOTE: the backend conversation refresh is no longer done here. With

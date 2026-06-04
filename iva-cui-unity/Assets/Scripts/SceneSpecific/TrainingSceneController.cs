@@ -206,6 +206,28 @@ public class TrainingSceneController : MonoBehaviour
     }
 
     private bool isThinking = false;
+    private Coroutine thinkingTimeoutCoroutine;
+    private const float kThinkingTimeoutSeconds = 30f;
+
+    private IEnumerator ThinkingTimeout()
+    {
+        yield return new WaitForSeconds(kThinkingTimeoutSeconds);
+        if (isThinking)
+        {
+            Debug.LogWarning("TrainingSceneController: thinking timeout — resetting mic.");
+            ResetThinking();
+        }
+    }
+
+    private void ResetThinking()
+    {
+        isThinking = false;
+        if (thinkingTimeoutCoroutine != null)
+        {
+            StopCoroutine(thinkingTimeoutCoroutine);
+            thinkingTimeoutCoroutine = null;
+        }
+    }
 
     private void HandleMicButtonInput()
     {
@@ -227,6 +249,7 @@ public class TrainingSceneController : MonoBehaviour
             StartCoroutine(ServerInterface.instance.UploadAudioBytes(audioBytes, PrintTranscriptionAndSendResponseGenerationRequest));
             timeStamp_UserFinishedInput = Time.time;
             isThinking = true;
+            thinkingTimeoutCoroutine = StartCoroutine(ThinkingTimeout());
         }
     }
 
@@ -259,7 +282,8 @@ public class TrainingSceneController : MonoBehaviour
 
             if (webRequest.result != UnityWebRequest.Result.Success)
             {
-                Debug.Log($"Error: {webRequest.error}");
+                Debug.LogError($"Error contacting speak endpoint: {webRequest.error}");
+                ResetThinking();
             }
             else
             {
@@ -309,13 +333,13 @@ public class TrainingSceneController : MonoBehaviour
 
                 botAudioSource.clip = clip;
                 botAudioSource.Play();
-                isThinking = false;
+                ResetThinking();
                 timeStamp_UserFinishedInput = 0.0f;
             }
             else
             {
                 Debug.LogError($"Failed to download audio clip: {www.error}");
-                isThinking = false;
+                ResetThinking();
             }
         }
     }

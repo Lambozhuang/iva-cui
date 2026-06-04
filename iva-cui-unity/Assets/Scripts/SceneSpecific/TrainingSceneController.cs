@@ -286,7 +286,13 @@ public class TrainingSceneController : MonoBehaviour
     private IEnumerator GenerateResponseToTranscription(string text)
     {
         string encodedText = UnityWebRequest.EscapeURL(text);
-        string url = $"http://127.0.0.1:8000/speak/agent1/?q={encodedText}";
+        // Use the Inspector-configured backend host (not hardcoded 127.0.0.1) so
+        // Training works on the netem topology where Unity and the backend are on
+        // separate machines.
+        string baseUrl = ServerInterface.instance != null
+            ? ServerInterface.instance.MiddlewareBaseUrl
+            : "http://127.0.0.1:8000";
+        string url = $"{baseUrl}/speak/agent1/?q={encodedText}";
 
         print($"Sending a request to middleware server");
 
@@ -304,7 +310,7 @@ public class TrainingSceneController : MonoBehaviour
                 Debug.Log($"Received: {webRequest.downloadHandler.text}");
                 TrainingSpeechResponse speechResponse = ExtractInfoFromResponse(webRequest.downloadHandler.text);
 
-                string audioFileUrl = $"http://127.0.0.1:8000/{speechResponse.audio}";
+                string audioFileUrl = $"{baseUrl}/{speechResponse.audio}";
 
                 StartCoroutine(Training_DownloadAndPlayAudio(audioFileUrl, speechResponse));
             }

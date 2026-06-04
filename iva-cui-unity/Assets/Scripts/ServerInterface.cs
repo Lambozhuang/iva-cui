@@ -21,6 +21,12 @@ public class ServerInterface : MonoBehaviour
     private string HostIpPort => $"{serverHost}:{serverPort}";
     private string WhisperUrl => $"http://{serverHost}:{whisperPort}/transcribe_audio/";
 
+    // Public middleware base URL (e.g. "http://192.168.1.50:8000") so other
+    // controllers reuse the Inspector-configured host instead of hardcoding
+    // 127.0.0.1 — required for the netem topology where Unity and the backend
+    // run on different machines.
+    public string MiddlewareBaseUrl => $"http://{HostIpPort}";
+
     public static ServerInterface instance;
 
     private void Awake()

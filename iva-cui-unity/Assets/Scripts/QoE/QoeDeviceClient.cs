@@ -118,6 +118,7 @@ namespace QoeDevice {
 
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton, startButton;
+        LazyCameraFollow canvasFollow;
 
         static readonly string[] kTaskLabels = {
             "Training", "Task 1", "Task 2", "Task 3", "Task 4",
@@ -144,7 +145,7 @@ namespace QoeDevice {
         static readonly string[] kTaskBriefings = {
             // 0 Training
             "Welcome! In this study you'll have a series of short conversations with virtual people. This first one is just practice.\n\n" +
-            "How it works: each conversation has a time limit, shown as a countdown — it's only an upper limit, so don't rush. When you feel the conversation is finished, simply say goodbye and the person will wrap up; a Done button will then appear for you to continue.\n\n" +
+            "How it works: each conversation has a time limit, shown as a countdown — it's only an upper limit, so don't rush. When you feel the conversation is finished, simply say goodbye and the person will wrap up; a Done button will then appear for you to continue. It's completely fine if the time runs out before you finish — that's normal and expected, so just chat naturally and don't worry about the clock.\n\n" +
             "After each conversation you'll be asked a few quick questions about how it felt, then you'll move on to the next one.\n\n" +
             "Right now you're with Alfred, a friendly assistant. Say hello and chat with him to get comfortable — to speak, press the microphone button on your right controller, and press it again when you finish talking.",
             // 1–3 City (Shirts)
@@ -387,10 +388,16 @@ namespace QoeDevice {
             var canvas = rootContainer.GetComponentInParent<Canvas>();
             if (canvas == null) { QoeLog.Warn("ui", "No Canvas in parent chain — skipping LazyCameraFollow"); return; }
             var root = canvas.rootCanvas != null ? canvas.rootCanvas : canvas;
-            var follow = root.GetComponent<LazyCameraFollow>();
-            if (follow == null) follow = root.gameObject.AddComponent<LazyCameraFollow>();
-            follow.distance = followDistance;
-            if (followCameraTarget != null) follow.cam = followCameraTarget;
+            canvasFollow = root.GetComponent<LazyCameraFollow>();
+            if (canvasFollow == null) canvasFollow = root.gameObject.AddComponent<LazyCameraFollow>();
+            canvasFollow.distance = followDistance;
+            if (followCameraTarget != null) canvasFollow.cam = followCameraTarget;
+        }
+
+        // Jump the HUD straight to its place in front of the camera after a
+        // teleport, so it doesn't visibly slide in from the old location.
+        void SnapHud() {
+            if (canvasFollow != null) canvasFollow.SnapToTarget();
         }
 
         [ContextMenu("Device: build controls UI")]
@@ -1003,6 +1010,7 @@ namespace QoeDevice {
             ActivateOnlySceneFor(taskIndex);
             var spawn = taskSpawnPoints[taskIndex];
             playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
+            SnapHud();
             string backendScene = kTaskBackendScenes[taskIndex];
             ServerInterface.RefreshScene(backendScene);
             QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
@@ -1037,6 +1045,7 @@ namespace QoeDevice {
                 playerTransform.SetPositionAndRotation(neutralPoint.position, neutralPoint.rotation);
             else
                 playerTransform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            SnapHud();
             QoeLog.Event("task", "teleported to neutral point");
         }
 

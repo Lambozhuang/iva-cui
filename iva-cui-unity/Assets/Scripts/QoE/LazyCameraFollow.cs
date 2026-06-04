@@ -23,13 +23,20 @@ namespace QoeDevice {
         public float rotationDamping = 8f;
 
         void Start() {
+            SnapToTarget();
+        }
+
+        // Jump the panel straight to its target pose in front of the camera, with
+        // no damping. Call this right after teleporting the rig — otherwise the
+        // panel is still at its old world position and LateUpdate's lerp makes it
+        // visibly "fly in" from the previous location.
+        public void SnapToTarget() {
             ResolveMainCameraIfMissing();
-            if (cam != null) {
-                transform.position = TargetPosition();
-                var lookDir = transform.position - cam.position;
-                if (lookDir.sqrMagnitude > 1e-6f)
-                    transform.rotation = Quaternion.LookRotation(lookDir);
-            }
+            if (cam == null) return;
+            transform.position = TargetPosition();
+            var lookDir = transform.position - cam.position;
+            if (lookDir.sqrMagnitude > 1e-6f)
+                transform.rotation = Quaternion.LookRotation(lookDir);
         }
 
         // In front of the camera, then dropped straight down by verticalOffset so

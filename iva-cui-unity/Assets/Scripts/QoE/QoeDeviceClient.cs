@@ -184,19 +184,52 @@ namespace QoeDevice {
             "The civil rights movement|Martin Luther King|The Montgomery Bus Boycott",
         };
 
+        // Concrete details the subject "has" for this conversation — e.g. a
+        // reservation number the receptionist may ask for. Arming the subject this
+        // way means it's fine for an agent to ask in character (gives the subject
+        // something real to say) without ever hanging them: they can just read it
+        // off. Shown in the briefing AND kept in the runtime panel. Empty string =
+        // no details for that task (most are pure free chat). Lines split on '|'.
+        static readonly string[] kTaskDetails = {
+            // 0 Training
+            "",
+            // 1–3 City (Shirts)
+            "",
+            "Return confirmation code: 1 1 1 1|Item: a red shirt",
+            "Return confirmation code: 1 1 1 1|Item: a red shirt",
+            // 4–6 Hotel
+            "Your reservation number: 2 4 6 8|Your name: Alex Taylor",
+            "",
+            "Your room number: 111",
+            // 7–9 Museum
+            "You're visiting as a student",
+            "",
+            "",
+        };
+
         string BriefingFor(int taskIndex) {
             string intro = (taskIndex >= 0 && taskIndex < kTaskBriefings.Length)
                 ? kTaskBriefings[taskIndex]
                 : "Press Start when you're ready to begin talking with the agent in front of you.";
+            var sb = new StringBuilder(intro);
+            string details = DetailsBlock(taskIndex);
+            if (!string.IsNullOrEmpty(details))
+                sb.Append("\n\nYour details (use these if asked):\n").Append(details);
             string points = TalkingPointsBlock(taskIndex);
-            if (string.IsNullOrEmpty(points)) return intro;
-            return intro + "\n\nYou could talk about:\n" + points;
+            if (!string.IsNullOrEmpty(points))
+                sb.Append("\n\nYou could talk about:\n").Append(points);
+            return sb.ToString();
         }
 
         // The talking-points formatted as a bulleted block. Empty string if none.
-        string TalkingPointsBlock(int taskIndex) {
-            if (taskIndex < 0 || taskIndex >= kTaskTalkingPoints.Length) return "";
-            var raw = kTaskTalkingPoints[taskIndex];
+        string TalkingPointsBlock(int taskIndex) => BulletBlock(kTaskTalkingPoints, taskIndex);
+
+        // The subject's concrete details as a bulleted block. Empty string if none.
+        string DetailsBlock(int taskIndex) => BulletBlock(kTaskDetails, taskIndex);
+
+        static string BulletBlock(string[] table, int taskIndex) {
+            if (table == null || taskIndex < 0 || taskIndex >= table.Length) return "";
+            var raw = table[taskIndex];
             if (string.IsNullOrEmpty(raw)) return "";
             var parts = raw.Split('|');
             var sb = new StringBuilder();
@@ -221,6 +254,8 @@ namespace QoeDevice {
         TMP_Text briefingText;
         GameObject briefingGo;
         TMP_Text pointsText;
+        TMP_Text detailsText;
+        GameObject detailsHeaderGo;
         GameObject pointsGo;
         PressDownButton doneButton;
         // True once the agent has wrapped up the conversation (user said goodbye).
@@ -379,8 +414,8 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = null;
-            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null;
+            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = detailsHeaderGo = null;
+            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -534,6 +569,18 @@ namespace QoeDevice {
             vlg.childControlWidth = true; vlg.childControlHeight = true;
             vlg.childAlignment = TextAnchor.UpperLeft;
 
+            // "Your details" section (e.g. reservation number) — shown first so
+            // it's right there if the agent asks. Header + text are hidden per-task
+            // when that task has no details (OnStartPressed sets visibility).
+            detailsHeaderGo = ui.BuildLabel(region, "Your details (use if asked):", 13, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
+
+            detailsText = ui.BuildLabel(region, "", 14, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
+            detailsText.enableWordWrapping = true;
+            detailsText.enableAutoSizing = true;
+            detailsText.fontSizeMin = ui.Sx(9);
+            detailsText.fontSizeMax = ui.Sx(14);
+            detailsText.gameObject.AddComponent<LayoutElement>();
+
             ui.BuildLabel(region, "You could talk about:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
 
             pointsText = ui.BuildLabel(region, "", 14, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
@@ -647,6 +694,12 @@ namespace QoeDevice {
             StudyControls.conversationGateOpen = true;
             conversationWrappedUp = false; // Done button hidden until the agent wraps up
             if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
+            // Details section: populate and show only when this task has details.
+            string details = DetailsBlock(activeTaskIndex);
+            bool hasDetails = !string.IsNullOrEmpty(details);
+            if (detailsText != null) detailsText.text = details;
+            if (detailsText != null) detailsText.gameObject.SetActive(hasDetails);
+            if (detailsHeaderGo != null) detailsHeaderGo.SetActive(hasDetails);
             if (!isDebugRun) {
                 QoeLog.Event("ws", $"sending ready for run {activeRunId}");
                 SendJson(new { type = WsType.Ready });

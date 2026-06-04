@@ -5,7 +5,9 @@ using UnityEngine;
 
 public class SceneProfiling
 {
-    private static string filePath = Path.Combine(Application.streamingAssetsPath, "latency_log.csv");
+    // persistentDataPath, not streamingAssetsPath: the latter is read-only inside
+    // the APK on Android (Quest), so File.Append would throw on-device.
+    private static string filePath = Path.Combine(Application.persistentDataPath, "latency_log.csv");
 
     public static int randomRequestId;
 

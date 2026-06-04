@@ -249,7 +249,7 @@ public class CollectInVRSurvey : MonoBehaviour
         sceneName = StudyControls.GetUserStudySceneName();
         unixTimeStamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         surveyFilePath = $"survey_answers_{subjectId}_{sceneName}_{unixTimeStamp}.csv";
-        var surveyDirFilePath = Path.Combine(Application.streamingAssetsPath, "Surveys");
+        var surveyDirFilePath = Path.Combine(Application.persistentDataPath, "Surveys");
         surveyFilePath = Path.Combine(surveyDirFilePath, surveyFilePath);
 
         if (!Directory.Exists(surveyDirFilePath))

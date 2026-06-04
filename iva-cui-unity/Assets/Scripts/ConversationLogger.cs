@@ -61,9 +61,11 @@ public class ConversationLogger : MonoBehaviour
     public static void CreateMessageHistoryLog(int participantId)
     {
         var fname = $"{participantId}_{System.DateTimeOffset.Now.ToUnixTimeSeconds()}_{StudyControls.GetUserStudySceneName()}.json";
-        filePath = Path.Combine(Application.streamingAssetsPath, "Conversations", fname);
+        // persistentDataPath, not streamingAssetsPath: the latter is read-only
+        // inside the APK on Android (Quest), so File.WriteAllText would throw.
+        filePath = Path.Combine(Application.persistentDataPath, "Conversations", fname);
 
-        string directoryPath = Path.Combine(Application.streamingAssetsPath, "Conversations");
+        string directoryPath = Path.Combine(Application.persistentDataPath, "Conversations");
         if (!Directory.Exists(directoryPath))
         {
             Directory.CreateDirectory(directoryPath);

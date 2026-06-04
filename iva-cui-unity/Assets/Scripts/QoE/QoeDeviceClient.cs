@@ -81,6 +81,11 @@ namespace QoeDevice {
         public ScreenFader fader;
         public float fadeDuration = 0.3f;
 
+        [Header("Debug run")]
+        [Tooltip("Run duration (s) used by the debug Task buttons. The real study " +
+                 "uses max_condition_duration_s from the operator instead.")]
+        public int debugRunDurationS = 120;
+
         string HttpBase    => $"http://{serverHost}:{serverPort}";
         string WsDeviceUrl => $"ws://{serverHost}:{serverPort}/device";
 
@@ -95,6 +100,7 @@ namespace QoeDevice {
         string activeLabel;
         int maxDurationS;
         int activeTaskIndex; // null/training → 0, task_number N → N
+        bool isDebugRun;     // true when started by a debug Task button (no operator WS / no /end-condition)
         Coroutine runCo;
         Coroutine connectTimeoutCo;
         const float ConnectTimeoutS = 10f;
@@ -212,10 +218,10 @@ namespace QoeDevice {
             bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
             bool taskReceived  = phase == DevicePhase.TaskReceived;
 
-            // Mic indicator + timer cluster. Normally only during a running task,
-            // but also show it in debug mode so the mic indicator is visible while
-            // testing via the Task teleport buttons (which don't enter RunningTask).
-            if (topLeftGo    != null) topLeftGo.SetActive(running || debugMode);
+            // Mic indicator + timer cluster — shown while a task is running. The
+            // debug Task buttons enter RunningTask too (DebugStartTask), so this
+            // is visible during manual testing exactly as in a real run.
+            if (topLeftGo    != null) topLeftGo.SetActive(running);
             if (logPanelGo   != null) logPanelGo.SetActive(debugMode);
             if (taskGridGo   != null) taskGridGo.SetActive(debugMode);
             if (connStatusGo != null) connStatusGo.SetActive(true);
@@ -385,7 +391,7 @@ namespace QoeDevice {
             grid.cellSize = new Vector2(cellW, cellH);
             for (int i = 0; i < kTaskLabels.Length; i++) {
                 int idx = i;
-                ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => TeleportToTask(idx));
+                ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => DebugStartTask(idx));
             }
         }
 
@@ -426,12 +432,32 @@ namespace QoeDevice {
         }
 
         IEnumerator TeleportThenStart() {
+            isDebugRun = false;
             TeleportToTask(activeTaskIndex);
             yield return null; // let rig move + camera-follower settle
             QoeLog.Event("ws", $"sending ready for run {activeRunId}");
             SendJson(new { type = WsType.Ready });
             CloseWsIntentional();
             if (ratingClient != null) ratingClient.CloseWs();
+            TransitionPhase(DevicePhase.RunningTask);
+            runCo = StartCoroutine(RunTaskThenEnd());
+        }
+
+        // Debug Task buttons run the SAME local lifecycle as a real task —
+        // teleport, RunningTask phase, timer, mic indicator, End-Run button,
+        // teleport-to-neutral on end — so what you see while debugging matches a
+        // real run. The only things it skips are the operator-only bits: the
+        // WebSocket ready/start handshake and the /end-condition POST. Uses
+        // debugRunDurationS instead of the operator's max_condition_duration_s.
+        public void DebugStartTask(int taskIndex) {
+            if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            isDebugRun     = true;
+            activeTaskIndex = taskIndex;
+            activeLabel    = (taskIndex >= 0 && taskIndex < kTaskLabels.Length) ? kTaskLabels[taskIndex] : $"Task {taskIndex}";
+            activeSid      = null;
+            maxDurationS   = Mathf.Max(1, debugRunDurationS);
+            QoeLog.Event("task", $"DEBUG run start: '{activeLabel}' index={taskIndex} duration={maxDurationS}s");
+            TeleportToTask(taskIndex);
             TransitionPhase(DevicePhase.RunningTask);
             runCo = StartCoroutine(RunTaskThenEnd());
         }
@@ -602,10 +628,16 @@ namespace QoeDevice {
                 }
                 yield return null;
             }
-            QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
             SetTimer(0);
             TeleportToNeutral();
-            yield return PostEndCondition(activeSid);
+            if (isDebugRun) {
+                QoeLog.Event("task", $"DEBUG task finished after {maxDurationS}s — no /end-condition");
+                SetHud("Debug run finished");
+                TransitionPhase(DevicePhase.Idle);
+            } else {
+                QoeLog.Event("task", $"task finished after {maxDurationS}s — calling /end-condition");
+                yield return PostEndCondition(activeSid);
+            }
             runCo = null;
         }
 
@@ -619,9 +651,15 @@ namespace QoeDevice {
             if (phase != DevicePhase.RunningTask) return;
             QoeLog.Event("task", $"end run early: run {activeRunId} '{activeLabel}'");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
+            SetTimer(0);
             TeleportToNeutral();
-            SetHud("Ending run early — calling /end-condition…");
-            StartCoroutine(PostEndCondition(activeSid));
+            if (isDebugRun) {
+                SetHud("Debug run ended");
+                TransitionPhase(DevicePhase.Idle);
+            } else {
+                SetHud("Ending run early — calling /end-condition…");
+                StartCoroutine(PostEndCondition(activeSid));
+            }
         }
 
         void TeleportToTask(int taskIndex) {

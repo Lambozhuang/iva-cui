@@ -118,6 +118,10 @@ namespace QoeDevice {
 
         readonly QoeUI ui = new();
         PressDownButton connectButton, disconnectButton, sendReadyButton, endRunEarlyButton, previewRatingButton, startButton;
+        // Subject-facing Ready button placed at the bottom of the welcome panel
+        // (non-debug). The right-side sendReadyButton is kept for debug. Both call
+        // SendReadyManual.
+        PressDownButton welcomeReadyButton;
         LazyCameraFollow canvasFollow;
 
         static readonly string[] kTaskLabels = {
@@ -359,6 +363,8 @@ namespace QoeDevice {
             if (welcomeGo != null) welcomeGo.SetActive(showWelcome);
             if (showWelcome && welcomeText != null)
                 welcomeText.text = taskReceived ? kWelcomeReady : kWelcomeIdle;
+            // The welcome-panel Ready button only when a task is waiting to start.
+            SetActive(welcomeReadyButton, showWelcome && taskReceived);
 
             // Pre-conversation briefing panel — only while the subject is reading
             // the context, before they press Start. The debug Task buttons enter
@@ -381,8 +387,14 @@ namespace QoeDevice {
 
             SetActive(connectButton,       debugMode || (canConnect   && !ratingVisible));
             SetActive(disconnectButton,    debugMode);
-            SetActive(sendReadyButton,     debugMode || (taskReceived && !ratingVisible));
-            SetActive(endRunEarlyButton,   debugMode || running);
+            // Right-side Ready is debug-only now; the subject uses the Ready button
+            // at the bottom of the welcome panel in non-debug.
+            SetActive(sendReadyButton,     debugMode);
+            // End Run: available across the whole task lifecycle in non-debug
+            // (task received, briefing, or running) so the operator can bail any
+            // time — not only mid-run. Not during bare idle (nothing to end) or a
+            // rating form. OnEndRunButton routes per phase.
+            SetActive(endRunEarlyButton,   debugMode || (!ratingVisible && (running || taskReceived || briefing)));
             SetActive(previewRatingButton, debugMode);
             if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running || briefing);
         }
@@ -497,7 +509,7 @@ namespace QoeDevice {
             connectButton     = ui.BuildButton(region, "Connect",    kBlue,  16, ConnectManual);
             disconnectButton  = ui.BuildButton(region, "Disconnect", kGray,  16, DisconnectManual);
             sendReadyButton   = ui.BuildButton(region, "Ready",      kGreen, 16, SendReadyManual);
-            endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   16, EndRunEarly);
+            endRunEarlyButton = ui.BuildButton(region, "End Run",    kRed,   16, OnEndRunButton);
             int btnH = ui.Sx(22);
             foreach (var b in new[] { connectButton, disconnectButton, sendReadyButton, endRunEarlyButton }) {
                 var le = b.GetComponent<LayoutElement>();
@@ -558,6 +570,15 @@ namespace QoeDevice {
             welcomeText.fontSizeMax = ui.Sx(18);
             var le = welcomeText.gameObject.AddComponent<LayoutElement>();
             le.flexibleHeight = 1f;
+
+            // Ready button at the bottom of the welcome panel, centered under the
+            // text — the subject's primary control. Shown only in the TaskReceived
+            // phase (UpdateUiVisibility); calls the same SendReadyManual as the
+            // debug right-side Ready.
+            welcomeReadyButton = ui.BuildButton(region, "Ready", kGreen, 20, SendReadyManual);
+            var rle = welcomeReadyButton.GetComponent<LayoutElement>();
+            int rh = ui.Sx(46);
+            rle.minHeight = rh; rle.preferredHeight = rh; rle.flexibleHeight = 0f;
         }
 
         const string kWelcomeIdle =
@@ -1020,6 +1041,21 @@ namespace QoeDevice {
 
         public void EndRunEarly() {
             FinishRun("operator ended early");
+        }
+
+        // The End Run button is available across the whole task lifecycle in
+        // non-debug, not just mid-run, so the operator can bail out at any point.
+        // Route to the right action for the current phase so the button is never
+        // dead: during a run → FinishRun; while briefing / task-received /
+        // loading → AbandonRun (no run to /end-condition yet); otherwise no-op.
+        public void OnEndRunButton() {
+            if (phase == DevicePhase.RunningTask) {
+                FinishRun("operator ended early");
+            } else if (phase == DevicePhase.Briefing
+                    || phase == DevicePhase.TaskReceived
+                    || phase == DevicePhase.LoadingTask) {
+                AbandonRun();
+            }
         }
 
         // Hard-stop the conversation at the end of a run (timer expiry or End Run),

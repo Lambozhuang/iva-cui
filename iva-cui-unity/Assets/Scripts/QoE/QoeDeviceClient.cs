@@ -390,11 +390,10 @@ namespace QoeDevice {
             // Right-side Ready is debug-only now; the subject uses the Ready button
             // at the bottom of the welcome panel in non-debug.
             SetActive(sendReadyButton,     debugMode);
-            // End Run: available across the whole task lifecycle in non-debug
-            // (task received, briefing, or running) so the operator can bail any
-            // time — not only mid-run. Not during bare idle (nothing to end) or a
-            // rating form. OnEndRunButton routes per phase.
-            SetActive(endRunEarlyButton,   debugMode || (!ratingVisible && (running || taskReceived || briefing)));
+            // End Run is a debug/operator control only — the subject never sees it
+            // in a real run. (The subject's own off-ramp is the Done button, which
+            // appears after the agent wraps up.)
+            SetActive(endRunEarlyButton,   debugMode);
             SetActive(previewRatingButton, debugMode);
             if (controlsGo != null) controlsGo.SetActive(debugMode || canConnect || taskReceived || running || briefing);
         }

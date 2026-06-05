@@ -131,7 +131,7 @@ public class ServerInterface : MonoBehaviour
         return whisperResponse.transcription;
     }
 
-    public IEnumerator SendTextToSpeechRequest(AgentType agentType, string text)
+    public IEnumerator SendTextToSpeechRequest(AgentType agentType, string text, int turnEpoch)
     {
         SceneProfiling.ttsReqStart = Time.time;
         string agentTypeString = agentType.ToString().ToLower();
@@ -159,12 +159,12 @@ public class ServerInterface : MonoBehaviour
 
                 string audioFileUrl = $"http://{HostIpPort}/{speechResponse.audio}";
 
-                StartCoroutine(DownloadAndPlayAudio(agentType, audioFileUrl, speechResponse));
+                StartCoroutine(DownloadAndPlayAudio(agentType, audioFileUrl, speechResponse, turnEpoch, text));
             }
         }
     }
 
-    private IEnumerator DownloadAndPlayAudio(AgentType agent, string audioUrl, SpeechResponse speechResponse)
+    private IEnumerator DownloadAndPlayAudio(AgentType agent, string audioUrl, SpeechResponse speechResponse, int turnEpoch, string userTranscript)
     {
         SceneProfiling.ttsVoiceDownloadStart = Time.time;
         using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(audioUrl, AudioType.MPEG))
@@ -174,7 +174,7 @@ public class ServerInterface : MonoBehaviour
             if (www.result == UnityWebRequest.Result.Success)
             {
                 AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
-                AgentSelectionController.PlayAudioForAgent(agent, clip, speechResponse);
+                AgentSelectionController.PlayAudioForAgent(agent, clip, speechResponse, turnEpoch, userTranscript);
 
                 // QoE thesis: skip the per-turn transition check in one-off mode.
                 // /check_transition fires a second LLM call every turn, but its

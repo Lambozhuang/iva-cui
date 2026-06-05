@@ -353,8 +353,14 @@ public class StudyControls : MonoBehaviour
             someoneIsThinking = true;
             StartThinkingTimeout();
 
+            // QoE telemetry: capture the run epoch NOW (synchronously, while we're
+            // unambiguously in this run) and carry it through the async pipeline to
+            // RecordTurn. If the run ends before the reply arrives, the epoch won't
+            // match the next run and the stale turn is dropped instead of polluting it.
+            int turnEpoch = QoeDevice.QoeTurnLog.CurrentEpoch;
+
             var audioBytes = microphoneHandler.GetLatestMicAudioBytes();
-            SendASRRequest(audioBytes);
+            SendASRRequest(audioBytes, turnEpoch);
         }
     }
 
@@ -403,14 +409,15 @@ public class StudyControls : MonoBehaviour
         }
     }
 
-    public void SendASRRequest(byte[] audioBytes)
+    public void SendASRRequest(byte[] audioBytes, int turnEpoch)
     {
-        StartCoroutine(test_ServerInterface.UploadAudioBytes(audioBytes, OnFinishASR));
+        StartCoroutine(test_ServerInterface.UploadAudioBytes(audioBytes, text => OnFinishASR(text, turnEpoch)));
     }
 
-    private void OnFinishASR(string text)
+    private void OnFinishASR(string text, int turnEpoch)
     {
         ConversationLogger.LogUserMessage(speakingToThisAgent, text);
-        StartCoroutine(test_ServerInterface.SendTextToSpeechRequest(speakingToThisAgent, text));
+        // QoE telemetry: carry the run epoch + user transcript through to RecordTurn.
+        StartCoroutine(test_ServerInterface.SendTextToSpeechRequest(speakingToThisAgent, text, turnEpoch));
     }
 }

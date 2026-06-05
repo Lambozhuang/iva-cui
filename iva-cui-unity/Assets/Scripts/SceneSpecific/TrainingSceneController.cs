@@ -277,15 +277,25 @@ public class TrainingSceneController : MonoBehaviour
                 microphoneHandler.PlayMicUnavailableSound();
                 return;
             }
+            // QoE telemetry: the Training pipeline records its own latency stages so
+            // a training turn produces the same telemetry record as a zone turn (it
+            // recorded nothing before). Mirrors StudyControls' zone mic-press path.
+            SceneProfiling.ResetTimes();
+            SceneProfiling.SetRandomRequestId();
+            SceneProfiling.speakStart = Time.time;
             microphoneHandler.StartRecording();
             SetMicActiveObjects(true);
         }
         else
         {
+            SceneProfiling.speakEnd = Time.time;
             microphoneHandler.StopRecording();
             SetMicActiveObjects(false);
+            // QoE telemetry: capture the run epoch now and carry it through the async
+            // pipeline so a reply arriving after the run ends is dropped (see QoeTurnLog).
+            int turnEpoch = QoeDevice.QoeTurnLog.CurrentEpoch;
             var audioBytes = microphoneHandler.GetLatestMicAudioBytes();
-            StartCoroutine(ServerInterface.instance.UploadAudioBytes(audioBytes, PrintTranscriptionAndSendResponseGenerationRequest));
+            StartCoroutine(ServerInterface.instance.UploadAudioBytes(audioBytes, t => PrintTranscriptionAndSendResponseGenerationRequest(t, turnEpoch)));
             timeStamp_UserFinishedInput = Time.time;
             isThinking = true;
             thinkingTimeoutCoroutine = StartCoroutine(ThinkingTimeout());
@@ -294,7 +304,7 @@ public class TrainingSceneController : MonoBehaviour
 
     private static int micInputsDone = 0;
 
-    public void PrintTranscriptionAndSendResponseGenerationRequest(string transcription)
+    public void PrintTranscriptionAndSendResponseGenerationRequest(string transcription, int turnEpoch)
     {
         var transcription_on_ui = $"You said: \"{transcription}\"";
         if (transcriptionTextUI != null) transcriptionTextUI.text = transcription_on_ui;
@@ -305,10 +315,10 @@ public class TrainingSceneController : MonoBehaviour
             endOfSceneObject.SetActive(true);
         }
 
-        StartCoroutine(GenerateResponseToTranscription(transcription));
+        StartCoroutine(GenerateResponseToTranscription(transcription, turnEpoch));
     }
 
-    private IEnumerator GenerateResponseToTranscription(string text)
+    private IEnumerator GenerateResponseToTranscription(string text, int turnEpoch)
     {
         string encodedText = UnityWebRequest.EscapeURL(text);
         // Use the Inspector-configured backend host (not hardcoded 127.0.0.1) so
@@ -321,6 +331,7 @@ public class TrainingSceneController : MonoBehaviour
 
         print($"Sending a request to middleware server");
 
+        SceneProfiling.ttsReqStart = Time.time; // QoE telemetry: /speak request sent
         using (UnityWebRequest webRequest = UnityWebRequest.Get(url))
         {
             yield return webRequest.SendWebRequest();
@@ -332,12 +343,13 @@ public class TrainingSceneController : MonoBehaviour
             }
             else
             {
+                SceneProfiling.ttsReqEnd = Time.time; // QoE telemetry: /speak response received
                 Debug.Log($"Received: {webRequest.downloadHandler.text}");
                 TrainingSpeechResponse speechResponse = ExtractInfoFromResponse(webRequest.downloadHandler.text);
 
                 string audioFileUrl = $"{baseUrl}/{speechResponse.audio}";
 
-                StartCoroutine(Training_DownloadAndPlayAudio(audioFileUrl, speechResponse));
+                StartCoroutine(Training_DownloadAndPlayAudio(audioFileUrl, speechResponse, turnEpoch, text));
             }
         }
     }
@@ -351,8 +363,9 @@ public class TrainingSceneController : MonoBehaviour
         return mean + standardDeviation * randStdNormal; // return the normally distributed value
     }
 
-    private IEnumerator Training_DownloadAndPlayAudio(string audioUrl, TrainingSpeechResponse speechResponse)
+    private IEnumerator Training_DownloadAndPlayAudio(string audioUrl, TrainingSpeechResponse speechResponse, int turnEpoch, string userTranscript)
     {
+        SceneProfiling.ttsVoiceDownloadStart = Time.time; // QoE telemetry: /static mp3 download begins
         using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(audioUrl, AudioType.MPEG))
         {
             yield return www.SendWebRequest();
@@ -364,10 +377,23 @@ public class TrainingSceneController : MonoBehaviour
                 // QoE thesis: no artificial response delay (see AgentSelectionController).
                 // The Training agent plays as soon as its audio downloads; only real
                 // network delay is present.
+                SceneProfiling.ttsVoicePlayStart = Time.time; // QoE telemetry: playback begins
                 botAudioSource.clip = clip;
                 botAudioSource.Play();
                 ResetThinking();
                 timeStamp_UserFinishedInput = 0.0f;
+
+                // QoE telemetry: record the turn at playback start, same race-free
+                // point as the zone pipeline. Training previously recorded nothing;
+                // this makes a training turn produce an identical telemetry record.
+                if (speechResponse != null)
+                {
+                    QoeDevice.QoeTurnLog.RecordTurn(
+                        turnEpoch, LLMAgents.AgentType.Agent1, "training", clip != null ? clip.length : 0f,
+                        speechResponse.llm_generation_time, speechResponse.speech_generation_time, speechResponse.llm_client_name,
+                        speechResponse.user_input_word_count, speechResponse.response_word_count, speechResponse.transition_length,
+                        speechResponse.conversation_over, userTranscript, speechResponse.message);
+                }
 
                 // Agent wrapped up (user said goodbye) — end the round after the
                 // goodbye clip plays, same as the zone pipeline.

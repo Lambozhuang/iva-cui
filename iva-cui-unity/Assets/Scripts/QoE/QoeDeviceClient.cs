@@ -23,6 +23,10 @@ namespace QoeDevice {
         public const string StartTask = "start_task";
         public const string Ready = "ready";
         public const string Rejected = "rejected";
+        // Operator console asks the device to upload the just-finished run's
+        // conversation telemetry. The device answers with POST /telemetry. Mirrors
+        // the qoe-lab XR simulator's request_telemetry → doUpload() flow.
+        public const string RequestTelemetry = "request_telemetry";
     }
 
     public class WsEnvelope { public string type; public JObject data; }
@@ -783,6 +787,15 @@ namespace QoeDevice {
                 if (ratingClient != null) ratingClient.CloseWs();
             }
             QoeLog.Event("task", $"Start pressed — conversation open, timing '{activeLabel}'");
+            // QoE telemetry: open the per-run telemetry envelope at the run t0 — the
+            // single point shared by real and debug runs (debug==real). Captures the
+            // run identity + the device clock base. Both audio pipelines push their
+            // turn-records into this until FinishRun finalizes it.
+            int? taskNumberForRun = activeTaskIndex == 0 ? (int?)null : activeTaskIndex;
+            string backendSceneForRun = (activeTaskIndex >= 0 && activeTaskIndex < kTaskBackendScenes.Length)
+                ? kTaskBackendScenes[activeTaskIndex] : "";
+            QoeTurnLog.BeginRun(isDebugRun ? null : activeSid, activeRunId, taskNumberForRun, activeTaskIndex,
+                activeLabel, backendSceneForRun, isDebugRun, deviceKind, maxDurationS, Time.time);
             TransitionPhase(DevicePhase.RunningTask);
             if (runCo != null) { StopCoroutine(runCo); }
             runCo = StartCoroutine(RunTaskThenEnd());
@@ -936,6 +949,9 @@ namespace QoeDevice {
                 case WsType.StartTask:
                     OnStartTask(env.data);
                     break;
+                case WsType.RequestTelemetry:
+                    OnRequestTelemetry(env.data);
+                    break;
                 default:
                     QoeLog.Warn("ws", $"Unhandled message type: '{env.type}'");
                     break;
@@ -963,6 +979,56 @@ namespace QoeDevice {
 
             TransitionPhase(DevicePhase.TaskReceived);
             SetHud($"Task received ('{activeLabel}') — press Ready to start");
+        }
+
+        // Operator console is asking for the just-finished run's conversation
+        // telemetry. Mirrors the qoe-lab XR simulator: on request_telemetry the
+        // device POSTs the run's telemetry to /telemetry. We answer only if the run
+        // it names is the one we last finalized (the envelope is held by QoeTurnLog);
+        // the body carries sid + condition_run_id + the turn-records.
+        void OnRequestTelemetry(JObject data) {
+            int reqRunId  = data?["condition_run_id"]?.ToObject<int>() ?? -1;
+            string reqSid = data?["session_id"]?.ToString();
+            QoeLog.Event("telemetry", $"request_telemetry for run {reqRunId}");
+            if (!QoeTurnLog.LastFinalizedMatches(reqSid, reqRunId)) {
+                QoeLog.Warn("telemetry", $"no finalized telemetry for run {reqRunId} (have {QoeTurnLog.LastFinalizedRunId}) — ignoring request");
+                return;
+            }
+            string body = QoeTurnLog.GetLastEnvelopeJson();
+            if (string.IsNullOrEmpty(body)) {
+                QoeLog.Warn("telemetry", "finalized run has no sid (debug?) — nothing to POST");
+                return;
+            }
+            StartCoroutine(PostTelemetry(reqRunId, body));
+        }
+
+        // POST the telemetry envelope to /telemetry. Best-effort with a couple of
+        // retries — telemetry must never block the session. The server stores the
+        // body verbatim; 409 means it's already stored (treat as done, don't retry);
+        // an {ignored:true} ack (e.g. a training run the server drops) is also done.
+        // The envelope is on disk regardless, so a give-up just means pull it off the
+        // headset later.
+        IEnumerator PostTelemetry(int runId, string body) {
+            var url = $"{HttpBase}/telemetry";
+            const int maxAttempts = 3;
+            const float retryDelay = 3f;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                using (var req = MakePostJson(url, body)) {
+                    yield return req.SendWebRequest();
+                    bool ok = req.result == UnityWebRequest.Result.Success && req.responseCode >= 200 && req.responseCode < 300;
+                    if (ok) {
+                        QoeLog.Event("telemetry", $"/telemetry uploaded for run {runId}");
+                        yield break;
+                    }
+                    if (req.responseCode == 409) {
+                        QoeLog.Event("telemetry", $"/telemetry run {runId} already stored (409) — done");
+                        yield break;
+                    }
+                    QoeLog.Warn("telemetry", $"/telemetry attempt {attempt}/{maxAttempts} failed: HTTP {req.responseCode} {req.error}");
+                }
+                if (attempt < maxAttempts) yield return new WaitForSeconds(retryDelay);
+            }
+            QoeLog.Err("telemetry", $"/telemetry gave up for run {runId} — telemetry file remains on device");
         }
 
         IEnumerator RunTaskThenEnd() {
@@ -996,6 +1062,11 @@ namespace QoeDevice {
             QoeLog.Event("task", $"finishing run {activeRunId} '{activeLabel}' — reason: {reason}");
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
             SetTimer(0);
+            // QoE telemetry: finalize the per-run envelope (stamp end reason + time,
+            // write the JSON file on the device, keep it for an inbound
+            // request_telemetry). Done before cleanup/teleport. Every turn-record is
+            // already captured at its playback start, so nothing is in flight here.
+            QoeTurnLog.FinishRun(reason, Time.time);
             EndConversationCleanup();
             TeleportToNeutral();
             if (isDebugRun) {

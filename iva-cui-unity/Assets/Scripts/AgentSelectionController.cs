@@ -91,7 +91,7 @@ namespace LLMAgents
             }
         }
 
-        public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, ServerInterface.SpeechResponse speechResponse)
+        public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, ServerInterface.SpeechResponse speechResponse, int turnEpoch, string userTranscript)
         {
             // Play on the zone the player is actually standing in, not the first
             // zone in the list that matches agentType. agentType is NOT unique:
@@ -124,16 +124,33 @@ namespace LLMAgents
             // measures the *real* delay caused by network impairment (netem), so any
             // added delay would corrupt the dependent variable. Play the response
             // the instant the audio has arrived.
-            instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, 0f));
+            instance.StartCoroutine(instance.PlayAgentResponseAfterDelay(zone, audioClip, 0f, agentType, speechResponse, turnEpoch, userTranscript));
             instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length, agentType, speechResponse));
         }
 
-        private IEnumerator PlayAgentResponseAfterDelay(ActivationZone zone, AudioClip audioClip, float remainingDelay)
+        private IEnumerator PlayAgentResponseAfterDelay(ActivationZone zone, AudioClip audioClip, float remainingDelay, AgentType agentType, ServerInterface.SpeechResponse speechResponse, int turnEpoch, string userTranscript)
         {
             yield return new WaitForSeconds(remainingDelay);
 
             SceneProfiling.ttsVoicePlayStart = Time.time;
             StudyControls.someoneIsThinking = false;
+
+            // QoE telemetry: record the turn the instant the reply begins to play.
+            // Every "time to response" timestamp (speakEnd → ttsVoicePlayStart) is set
+            // by now, and recording here — rather than clip.length seconds later —
+            // means a run that ends (timer/Done/operator) mid-clip can't drop this
+            // turn before it's captured. turnEpoch (captured at mic release) lets
+            // RecordTurn drop a reply that arrived after its run already ended.
+            // No-ops when there's no active QoE run.
+            if (speechResponse != null)
+            {
+                QoeDevice.QoeTurnLog.RecordTurn(
+                    turnEpoch, agentType, "zone", audioClip != null ? audioClip.length : 0f,
+                    speechResponse.llm_generation_time, speechResponse.speech_generation_time, speechResponse.llm_client_name,
+                    speechResponse.user_input_word_count, speechResponse.response_word_count, speechResponse.transition_length,
+                    speechResponse.conversation_over, userTranscript, speechResponse.message);
+            }
+
             if (StudyControls.USE_NEW_LOOKAWAY)
             {
                 zone.LookAwayFromPlayerWhileThinking(false);

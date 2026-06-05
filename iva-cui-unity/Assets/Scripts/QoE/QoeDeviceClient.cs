@@ -258,6 +258,8 @@ namespace QoeDevice {
         TMP_Text detailsText;
         GameObject detailsHeaderGo;
         GameObject pointsGo;
+        GameObject welcomeGo;
+        TMP_Text welcomeText;
         PressDownButton doneButton;
         // True once the agent has wrapped up the conversation (user said goodbye).
         // The Done button stays hidden until this flips, so it isn't offered from
@@ -319,6 +321,7 @@ namespace QoeDevice {
             BuildConnStatus(rootContainer);
             BuildControlsCluster(rootContainer);
             BuildCenterRegion(rootContainer);
+            BuildWelcomePanel(rootContainer);
             BuildBriefingPanel(rootContainer);
             BuildPointsPanel(rootContainer);
             BuildErrorBanner(rootContainer);
@@ -345,6 +348,17 @@ namespace QoeDevice {
             bool briefing      = phase == DevicePhase.Briefing;
             bool canConnect    = phase == DevicePhase.Idle && !isConnecting && !IsWsOpen;
             bool taskReceived  = phase == DevicePhase.TaskReceived;
+
+            // Welcome / waiting panel at the neutral spawn, before any task runs.
+            // Shown while Idle (waiting for the operator) and TaskReceived (Ready
+            // showing), but not while a rating form is up, and not in debug (the
+            // operator drives tasks directly from the grid there). Hidden the
+            // moment a run begins.
+            bool idleWaiting = phase == DevicePhase.Idle && IsWsOpen;
+            bool showWelcome = !debugMode && !ratingVisible && (idleWaiting || taskReceived);
+            if (welcomeGo != null) welcomeGo.SetActive(showWelcome);
+            if (showWelcome && welcomeText != null)
+                welcomeText.text = taskReceived ? kWelcomeReady : kWelcomeIdle;
 
             // Pre-conversation briefing panel — only while the subject is reading
             // the context, before they press Start. The debug Task buttons enter
@@ -421,8 +435,8 @@ namespace QoeDevice {
                 var child = rootContainer.GetChild(i).gameObject;
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
-            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = detailsHeaderGo = null;
-            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null;
+            topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = detailsHeaderGo = welcomeGo = null;
+            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null; welcomeText = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -518,6 +532,41 @@ namespace QoeDevice {
             errorText.enableWordWrapping = true;
             QoeUI.StretchToParent((RectTransform)errorText.transform);
         }
+
+        // Subject-facing welcome shown at the neutral spawn before any task runs:
+        // while Idle (waiting for the operator to start the next conversation) and
+        // while a task has been received but not yet started (Ready showing). Plain
+        // reassuring guidance so the subject isn't staring at a blank world; the
+        // actual text is set per-phase in UpdateUiVisibility.
+        void BuildWelcomePanel(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Welcome", new Vector2(0.12f, 0.3f), new Vector2(0.88f, 0.82f), ui.Sx(6));
+            welcomeGo = region.gameObject;
+            var bg = region.gameObject.AddComponent<Image>();
+            bg.color = new Color(0f, 0f, 0f, 0.55f);
+
+            var vlg = region.gameObject.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(10);
+            vlg.padding = new RectOffset(ui.Sx(18), ui.Sx(18), ui.Sx(16), ui.Sx(16));
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.MiddleCenter;
+
+            welcomeText = ui.BuildLabel(region, "", 18, FontStyles.Normal, Color.white, TextAlignmentOptions.Center);
+            welcomeText.enableWordWrapping = true;
+            welcomeText.enableAutoSizing = true;
+            welcomeText.fontSizeMin = ui.Sx(11);
+            welcomeText.fontSizeMax = ui.Sx(18);
+            var le = welcomeText.gameObject.AddComponent<LayoutElement>();
+            le.flexibleHeight = 1f;
+        }
+
+        const string kWelcomeIdle =
+            "Welcome to the study!\n\n" +
+            "You'll have a series of short conversations with virtual people. " +
+            "Please wait here — the next conversation will begin shortly.";
+        const string kWelcomeReady =
+            "Ready for the next conversation.\n\n" +
+            "When you're ready to begin, press the Ready button.";
 
         // Pre-conversation briefing: a centered panel with the per-task context
         // text and a big Start button. Shown only during the Briefing phase (after
@@ -791,6 +840,7 @@ namespace QoeDevice {
                 SetHud("Connected — waiting for task...");
                 SendHello();
                 UpdateButtonStates();
+                UpdateUiVisibility(); // show the "welcome / waiting" panel now we're connected
             });
 
             ws.OnMessage += (bytes) => {

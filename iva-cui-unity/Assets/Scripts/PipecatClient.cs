@@ -29,12 +29,7 @@ public class PipecatClient : MonoBehaviour
     public string rtviVersion = "1.0.0";
 
     [Header("Microphone")]
-    [Tooltip("Substring of the mic device to use (e.g. \"Realtek\"). Picks the first " +
-             "device whose name contains this. Leave EMPTY to use the system default " +
-             "device[0]. IMPORTANT: do NOT pick a virtual/loopback device (e.g. " +
-             "\"Oculus Virtual Audio Device\") — it captures the rendered output and " +
-             "feeds the agent's own voice back, causing echo. Right-click this " +
-             "component -> 'List Microphone Devices' to see available names in the Console.")]
+    [Tooltip("Capture device. Don't pick a virtual/loopback device — it echoes.")]
     public string micDeviceName = "";
 
     public enum KokoroVoice
@@ -141,15 +136,7 @@ public class PipecatClient : MonoBehaviour
 
     // === Connection ===
 
-    // Right-click the component header in the Inspector to dump available mic names.
-    [ContextMenu("List Microphone Devices")]
-    private void ListMicrophoneDevices()
-    {
-        if (Microphone.devices.Length == 0) { Debug.Log("[Pipecat] No microphone devices."); return; }
-        Debug.Log("[Pipecat] Microphone devices:\n  - " + string.Join("\n  - ", Microphone.devices));
-    }
-
-    // Pick the first device whose name contains micDeviceName (case-insensitive);
+    // Pick the device whose name contains micDeviceName (case-insensitive);
     // empty -> device[0]. Avoids blindly grabbing a virtual loopback device.
     private string ResolveMicDevice()
     {

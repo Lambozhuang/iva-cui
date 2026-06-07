@@ -38,11 +38,12 @@ public class PipecatClient : MonoBehaviour
     [Header("Agent TTS voice (sent at connect time)")]
     public KokoroVoice voice = KokoroVoice.af_heart;
 
-    [Header("Lip sync fallback (optional)")]
-    [Tooltip("Leave EMPTY for the minimal path (the avatar's own OVR context reads " +
-             "its AudioSource). Only assign if the mouth does NOT move: then set that " +
-             "context's Skip Audio Source = true and we feed it PCM directly.")]
-    public OVRLipSyncContext lipSyncContext;
+    // The agent avatar's OVR Lip Sync context, auto-found on the sink's GameObject
+    // at Connect. We drive it via the split-tap (skipAudioSource=true + fed PCM from
+    // onReceived) because letting OVR read a SetTrack'd AudioSource directly produces
+    // a constantly-flapping mouth (WebRTC's receiver filter ordering). Proven in PoC.
+    private OVRLipSyncContext agentLipSync;
+    private bool agentLipSyncOriginalSkip;
 
     // True once the peer connection + data channel are up (greeting still held).
     // QoeDeviceClient gates the Start button on this.
@@ -81,6 +82,22 @@ public class PipecatClient : MonoBehaviour
     {
         if (pc != null) { Debug.LogWarning("[Pipecat] Connect() called while already connected — ignoring."); return; }
         agentSink = sink;
+
+        // Find the agent's OVR Lip Sync context (on the sink GameObject) and switch
+        // it to the split-tap: it stops reading its own AudioSource (which produces a
+        // flapping mouth with a SetTrack'd source) and instead consumes the PCM we
+        // feed from onReceived. Original flag restored on Disconnect.
+        agentLipSync = sink != null ? sink.GetComponent<OVRLipSyncContext>() : null;
+        if (agentLipSync != null)
+        {
+            agentLipSyncOriginalSkip = agentLipSync.skipAudioSource;
+            agentLipSync.skipAudioSource = true;
+        }
+        else if (sink != null)
+        {
+            Debug.LogWarning($"[Pipecat] No OVRLipSyncContext on {sink.gameObject.name} — mouth won't move.");
+        }
+
         StartCoroutine(ConnectRoutine());
     }
 
@@ -97,14 +114,17 @@ public class PipecatClient : MonoBehaviour
     {
         tearingDown = true;
         if (remoteTrack != null) { remoteTrack.onReceived -= OnRemoteAudio; }
-        if (agentSink != null) { agentSink.Stop(); agentSink.SetTrack(null); }
+        // Stop playback. (Don't SetTrack(null) — com.unity.webrtc dereferences it.)
+        if (agentSink != null) agentSink.Stop();
+        // Reset the agent's OVR context to silence so the mouth stops moving.
+        if (agentLipSync != null) agentLipSync.skipAudioSource = agentLipSyncOriginalSkip;
         if (dc != null) { dc.Close(); dc = null; }
         if (micTrack != null) { micTrack.Dispose(); micTrack = null; }
         if (sendStream != null) { sendStream.Dispose(); sendStream = null; }
         if (pc != null) { pc.Close(); pc = null; }
         if (!string.IsNullOrEmpty(micDevice)) { Microphone.End(micDevice); micDevice = null; }
         if (micSource != null) { Destroy(micSource); micSource = null; }
-        remoteTrack = null; agentSink = null;
+        remoteTrack = null; agentSink = null; agentLipSync = null;
         dcReady = greetReleased = clientReadySent = IsConnected = false;
         tearingDown = false;
         Debug.Log("[Pipecat] disconnected");
@@ -236,8 +256,8 @@ public class PipecatClient : MonoBehaviour
 
     private void OnRemoteAudio(float[] data, int channels, int sampleRate)
     {
-        if (tearingDown || lipSyncContext == null) return;
-        lipSyncContext.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
+        if (tearingDown || agentLipSync == null) return;
+        agentLipSync.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 
     private void OnDcMessage(byte[] bytes)

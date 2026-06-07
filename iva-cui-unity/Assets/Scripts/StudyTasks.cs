@@ -56,7 +56,7 @@ public class StudyTasks : MonoBehaviour
 
     public static bool agentFinishedTalking = false;
 
-    public static IEnumerator SetAgentFinishedTalkingAfterSeconds(float seconds, AgentType agentType, ServerInterface.SpeechResponse speechResponse)
+    public static IEnumerator SetAgentFinishedTalkingAfterSeconds(float seconds, AgentType agentType, TurnData speechResponse)
     {
         yield return new WaitForSeconds(seconds);
         agentFinishedTalking = true;

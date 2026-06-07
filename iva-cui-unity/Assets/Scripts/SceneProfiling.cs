@@ -42,7 +42,7 @@ public class SceneProfiling
         randomRequestId = UnityEngine.Random.Range(0, 1000000);
     }
 
-    public static void ComputeTimes(ServerInterface.SpeechResponse speechResponse)
+    public static void ComputeTimes(TurnData speechResponse)
     {
         float userSpeakDuration = speakEnd - speakStart;
         float asrDuration = asrEnd - asrStart;
@@ -75,7 +75,7 @@ public class SceneProfiling
         filePath = path;
     }
 
-    public static void LogLatencyDetails(AgentType agentType, ServerInterface.SpeechResponse speechResponse)
+    public static void LogLatencyDetails(AgentType agentType, TurnData speechResponse)
     {
         float userSpeakDuration = speakEnd - speakStart;
         float asrDuration = asrEnd - asrStart;

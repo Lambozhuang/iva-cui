@@ -174,7 +174,8 @@ public class ServerInterface : MonoBehaviour
             if (www.result == UnityWebRequest.Result.Success)
             {
                 AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
-                AgentSelectionController.PlayAudioForAgent(agent, clip, speechResponse, turnEpoch, userTranscript);
+                TurnData turnData = speechResponse != null ? speechResponse.ToTurnData() : null;
+                AgentSelectionController.PlayAudioForAgent(agent, clip, turnData, turnEpoch, userTranscript);
 
                 // QoE thesis: skip the per-turn transition check in one-off mode.
                 // /check_transition fires a second LLM call every turn, but its
@@ -196,7 +197,7 @@ public class ServerInterface : MonoBehaviour
                     StartCoroutine(EndRunAfterClip(clip != null ? clip.length : 0f));
                 }
 
-                SceneProfiling.ComputeTimes(speechResponse);
+                SceneProfiling.ComputeTimes(turnData);
             }
             else
             {
@@ -247,6 +248,23 @@ public class ServerInterface : MonoBehaviour
                    $"Transition Length: {transition_length}\n" +
                    $"LLM Generation Time: {llm_generation_time}\n" +
                    $"Speech Generation Time: {speech_generation_time}";
+        }
+
+        // Throwaway glue: this whole class is deleted with the HTTP pipeline. Lets
+        // the project compile while the harness moves to the standalone TurnData DTO.
+        public TurnData ToTurnData()
+        {
+            return new TurnData
+            {
+                message = message,
+                conversation_over = conversation_over,
+                llm_client_name = llm_client_name,
+                user_input_word_count = user_input_word_count,
+                response_word_count = response_word_count,
+                transition_length = transition_length,
+                llm_generation_time = llm_generation_time,
+                speech_generation_time = speech_generation_time,
+            };
         }
     }
 

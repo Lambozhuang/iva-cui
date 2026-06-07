@@ -91,7 +91,7 @@ namespace LLMAgents
             }
         }
 
-        public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, ServerInterface.SpeechResponse speechResponse, int turnEpoch, string userTranscript)
+        public static void PlayAudioForAgent(AgentType agentType, AudioClip audioClip, TurnData speechResponse, int turnEpoch, string userTranscript)
         {
             // Play on the zone the player is actually standing in, not the first
             // zone in the list that matches agentType. agentType is NOT unique:
@@ -128,7 +128,7 @@ namespace LLMAgents
             instance.StartCoroutine(StudyTasks.SetAgentFinishedTalkingAfterSeconds(audioClip.length, agentType, speechResponse));
         }
 
-        private IEnumerator PlayAgentResponseAfterDelay(ActivationZone zone, AudioClip audioClip, float remainingDelay, AgentType agentType, ServerInterface.SpeechResponse speechResponse, int turnEpoch, string userTranscript)
+        private IEnumerator PlayAgentResponseAfterDelay(ActivationZone zone, AudioClip audioClip, float remainingDelay, AgentType agentType, TurnData speechResponse, int turnEpoch, string userTranscript)
         {
             yield return new WaitForSeconds(remainingDelay);
 

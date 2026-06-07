@@ -77,6 +77,15 @@ namespace QoeDevice {
         [Tooltip("Where the player goes when a run ends. Defaults to world origin if unassigned.")]
         public Transform neutralPoint;
 
+        [Header("Pipecat WebRTC voice agent")]
+        [Tooltip("The PipecatClient that connects to the Mac bot. Connect happens at " +
+                 "briefing (per encounter), greeting releases on Start, disconnect on run-end.")]
+        public PipecatClient pipecat;
+        [Tooltip("The agent avatar's lip-sync AudioSource per task index, parallel to " +
+                 "taskSpawnPoints: [0]=Training, [1..3]=City, [4..6]=Hotel, [7..9]=Museum. " +
+                 "The agent voice plays through this so the avatar's OVR Lip Sync moves the mouth.")]
+        public AudioSource[] taskAgentAudioSources = new AudioSource[10];
+
         [Header("Scene culling (performance)")]
         [Tooltip("Optional. The four scene roots in QoE_Shell: [0]=Training, [1]=City, " +
                  "[2]=Hotel, [3]=Museum. When assigned, only the scene the player is " +
@@ -761,7 +770,16 @@ namespace QoeDevice {
             StudyControls.conversationGateOpen = false;
             if (briefingText != null) briefingText.text = BriefingFor(activeTaskIndex);
             TransitionPhase(DevicePhase.Briefing);
-            QoeLog.Event("task", $"briefing shown for '{activeLabel}' — waiting for Start");
+            // Pipecat: begin connecting to this task's agent NOW (during the brief read)
+            // so the connection is up by the time the subject presses Start. The
+            // greeting is held until OnStartPressed. Start stays disabled until
+            // pipecat.IsConnected (see UpdateButtonStates).
+            if (pipecat != null) {
+                AudioSource sink = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentAudioSources.Length)
+                    ? taskAgentAudioSources[activeTaskIndex] : null;
+                pipecat.Connect(sink);
+            }
+            QoeLog.Event("task", $"briefing shown for '{activeLabel}' — connecting agent, waiting for Start");
         }
 
         // Start button: the subject has read the context and is ready to talk.
@@ -771,6 +789,9 @@ namespace QoeDevice {
         public void OnStartPressed() {
             if (phase != DevicePhase.Briefing) return;
             StudyControls.conversationGateOpen = true;
+            // Pipecat: release the agent's greeting now (it was held since briefing).
+            // The mic also goes hot as the gate is now open.
+            if (pipecat != null) pipecat.OpenConversation();
             conversationWrappedUp = false; // Done button hidden until the agent wraps up
             if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
             // Details section: populate and show only when this task has details.
@@ -820,12 +841,21 @@ namespace QoeDevice {
             EnterBriefing();
         }
 
+        bool lastPipecatConnected;
+
         void Update() {
 #if !UNITY_WEBGL || UNITY_EDITOR
             ws?.DispatchMessageQueue(); // NativeWebSocket requires manual pump on non-WebGL
 #endif
             while (mainQ.TryDequeue(out var a)) a();
             UpdateMicDot();
+
+            // Re-enable the Start button the moment the Pipecat connection comes up
+            // during briefing (UpdateButtonStates otherwise only runs on transitions).
+            if (pipecat != null && phase == DevicePhase.Briefing && pipecat.IsConnected != lastPipecatConnected) {
+                lastPipecatConnected = pipecat.IsConnected;
+                UpdateButtonStates();
+            }
         }
 
         void UpdateMicDot() {
@@ -1140,10 +1170,11 @@ namespace QoeDevice {
             LLMAgents.AgentSelectionController.StopAllAgents();
             TrainingSceneController.StopAudio();
             if (StudyControls.instance != null) StudyControls.instance.ResetConversationState();
-            // SEAM (Pipecat): the old HTTP backend refresh (per-scene conversation
-            // reset) is gone. The WebRTC client re-establishes per-agent state via
-            // reconnect on the next encounter, so there's nothing to refresh here.
-            QoeLog.Event("task", "end-of-run cleanup: stopped agents, reset conversation state");
+            // Pipecat: disconnect from the agent. Per-encounter reconnect on the next
+            // task gives each agent a fresh bot session/context (and its own voice),
+            // and discards any in-flight late reply.
+            if (pipecat != null) pipecat.Disconnect();
+            QoeLog.Event("task", "end-of-run cleanup: stopped agents, reset conversation state, disconnected agent");
         }
 
         void TeleportToTask(int taskIndex) {
@@ -1285,7 +1316,9 @@ namespace QoeDevice {
             SetBtn(connectButton,     phase == DevicePhase.Idle && !isConnecting && !wsOpen);
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
-            SetBtn(startButton,       phase == DevicePhase.Briefing);
+            // Start is gated until the Pipecat connection is up (so the greeting can
+            // fire immediately on press). If no pipecat is assigned, don't block.
+            SetBtn(startButton,       phase == DevicePhase.Briefing && (pipecat == null || pipecat.IsConnected));
             SetBtn(doneButton,        phase == DevicePhase.RunningTask && conversationWrappedUp);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();

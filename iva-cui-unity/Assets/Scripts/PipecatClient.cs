@@ -5,17 +5,20 @@ using Unity.WebRTC;
 using UnityEngine;
 using UnityEngine.Networking;
 
-// Unity <-> Pipecat (macos-local-voice-agents) voice agent over WebRTC.
-// Ported from the proven PoC. Full-duplex: streams the mic up continuously and
-// plays the agent's voice through an avatar AudioSource that already has OVR Lip
-// Sync wired (so the mouth moves). Demo-quality, single file.
+// Unity <-> Pipecat (macos-local-voice-agents) voice agent over WebRTC, wired
+// into the QoE study's task lifecycle. Demo-quality, single file.
 //
-// MILESTONE 2 (single agent): assign `targetAudioSource` to one agent's existing
-// lip-sync AudioSource (e.g. "Agent 1 LipSync"). Multi-agent per-encounter
-// reconnect comes in Milestone 4.
+// LIFECYCLE (driven by QoeDeviceClient):
+//   teleport-to-task / briefing  -> Connect(agentSink)   peer+DC+ICE up, mic muted,
+//                                                          greeting HELD back
+//   Start pressed (gate opens)    -> OpenConversation()   release greeting, mic hot
+//   Done / timer / teleport-away  -> Disconnect()         tear down, fresh next time
 //
-// SEAM (Pipecat): this is where the old HTTP voice pipeline used to live. The
-// study harness (conversationGateOpen, QoeTurnLog.CurrentEpoch) is consulted but
+// Per-encounter connect = each agent gets its own bot session/voice (Milestone 4
+// just makes offerUrl/voice per-agent). The agent voice plays through the agent
+// avatar's existing lip-sync AudioSource (passed to Connect), so the mouth moves.
+// No proximity / ActivationZone dependency — the active agent is chosen by task.
+//
 // QoE re-sourcing from RTVI events is deferred (Milestone 6).
 public class PipecatClient : MonoBehaviour
 {
@@ -35,20 +38,15 @@ public class PipecatClient : MonoBehaviour
     [Header("Agent TTS voice (sent at connect time)")]
     public KokoroVoice voice = KokoroVoice.af_heart;
 
-    [Header("Avatar audio (assign one agent's lip-sync AudioSource)")]
-    [Tooltip("The agent avatar's existing AudioSource that drives OVR Lip Sync. " +
-             "The agent voice plays through this so the mouth moves. If null, a " +
-             "fallback child AudioSource is created (audible, but no lip sync).")]
-    public AudioSource targetAudioSource;
-
     [Header("Lip sync fallback (optional)")]
     [Tooltip("Leave EMPTY for the minimal path (the avatar's own OVR context reads " +
-             "targetAudioSource). Only assign this if the mouth does NOT move: then " +
-             "set that context's Skip Audio Source = true and we feed it PCM directly.")]
+             "its AudioSource). Only assign if the mouth does NOT move: then set that " +
+             "context's Skip Audio Source = true and we feed it PCM directly.")]
     public OVRLipSyncContext lipSyncContext;
 
-    [Header("Connect on Start (else call Connect() manually)")]
-    public bool connectOnStart = true;
+    // True once the peer connection + data channel are up (greeting still held).
+    // QoeDeviceClient gates the Start button on this.
+    public bool IsConnected { get; private set; }
 
     private RTCPeerConnection pc;
     private RTCDataChannel dc;
@@ -56,9 +54,14 @@ public class PipecatClient : MonoBehaviour
     private AudioStreamTrack micTrack;
     private AudioStreamTrack remoteTrack;
     private AudioSource micSource;
+    private AudioSource agentSink;     // the current agent avatar's lip-sync AudioSource
     private AudioClip micClip;
     private string micDevice;
     private float keepAliveTimer;
+
+    private bool dcReady;              // data channel open
+    private bool greetReleased;        // OpenConversation() called -> ok to send client-ready
+    private bool clientReadySent;
     private bool tearingDown;
 
     [Serializable] private class OfferBody { public string sdp; public string type; public string pc_id; public bool restart_pc; public string voice; }
@@ -67,19 +70,47 @@ public class PipecatClient : MonoBehaviour
     private void Start()
     {
         StartCoroutine(WebRTC.Update());
-
-        // If no avatar AudioSource was assigned, make a throwaway one so audio is at
-        // least audible (no lip sync in that case).
-        if (targetAudioSource == null)
-        {
-            var go = new GameObject("PipecatRemoteAudio");
-            go.transform.SetParent(transform);
-            targetAudioSource = go.AddComponent<AudioSource>();
-            Debug.LogWarning("[Pipecat] No targetAudioSource assigned — created a fallback (no lip sync).");
-        }
-
-        if (connectOnStart) Connect();
     }
+
+    // === Study lifecycle entry points (called by QoeDeviceClient) ===
+
+    // Begin connecting to the agent. `sink` is the agent avatar's lip-sync
+    // AudioSource the reply should play through (its OVR context drives the mouth).
+    // The greeting is held until OpenConversation().
+    public void Connect(AudioSource sink)
+    {
+        if (pc != null) { Debug.LogWarning("[Pipecat] Connect() called while already connected — ignoring."); return; }
+        agentSink = sink;
+        StartCoroutine(ConnectRoutine());
+    }
+
+    // Release the agent's greeting and open the mic. Called when the subject
+    // presses Start (gate opens). Safe to call before or after the DC opens.
+    public void OpenConversation()
+    {
+        greetReleased = true;
+        TrySendClientReady();
+    }
+
+    // Tear everything down so a fresh Connect() starts a clean session/context.
+    public void Disconnect()
+    {
+        tearingDown = true;
+        if (remoteTrack != null) { remoteTrack.onReceived -= OnRemoteAudio; }
+        if (agentSink != null) { agentSink.Stop(); agentSink.SetTrack(null); }
+        if (dc != null) { dc.Close(); dc = null; }
+        if (micTrack != null) { micTrack.Dispose(); micTrack = null; }
+        if (sendStream != null) { sendStream.Dispose(); sendStream = null; }
+        if (pc != null) { pc.Close(); pc = null; }
+        if (!string.IsNullOrEmpty(micDevice)) { Microphone.End(micDevice); micDevice = null; }
+        if (micSource != null) { Destroy(micSource); micSource = null; }
+        remoteTrack = null; agentSink = null;
+        dcReady = greetReleased = clientReadySent = IsConnected = false;
+        tearingDown = false;
+        Debug.Log("[Pipecat] disconnected");
+    }
+
+    // === Connection ===
 
     private IEnumerator InitMic()
     {
@@ -101,11 +132,6 @@ public class PipecatClient : MonoBehaviour
         Debug.Log($"[Pipecat] Mic started: {micDevice}");
     }
 
-    public void Connect()
-    {
-        StartCoroutine(ConnectRoutine());
-    }
-
     private IEnumerator ConnectRoutine()
     {
         yield return StartCoroutine(InitMic());
@@ -120,26 +146,17 @@ public class PipecatClient : MonoBehaviour
         {
             if (e.Track is AudioStreamTrack at)
             {
-                Debug.Log("[Pipecat] Remote audio track received -> playing on avatar AudioSource");
+                Debug.Log("[Pipecat] Remote audio track received -> routing to agent avatar");
                 remoteTrack = at;
-                // Play the agent voice through the avatar's lip-sync AudioSource so
-                // its existing OVR Lip Sync context drives the mouth (minimal path).
-                targetAudioSource.SetTrack(at);
-                targetAudioSource.loop = true;
-                targetAudioSource.Play();
-
-                // Fallback path: if a lipSyncContext was assigned (because the minimal
-                // path didn't move the mouth), feed it PCM directly. Harmless if null.
-                at.onReceived += OnRemoteAudio;
+                RouteToAgentSink();
+                at.onReceived += OnRemoteAudio; // only used if lipSyncContext fallback is set
             }
         };
 
-        if (micSource != null)
-        {
-            sendStream = new MediaStream();
-            micTrack = new AudioStreamTrack(micSource);
-            pc.AddTrack(micTrack, sendStream);
-        }
+        sendStream = new MediaStream();
+        micTrack = new AudioStreamTrack(micSource);
+        micTrack.Enabled = false; // muted until the gate opens (Start)
+        pc.AddTrack(micTrack, sendStream);
 
         dc = pc.CreateDataChannel("chat", new RTCDataChannelInit { ordered = true });
         dc.OnOpen = OnDcOpen;
@@ -186,21 +203,41 @@ public class PipecatClient : MonoBehaviour
         }
     }
 
-    // Worker-thread callback: only used for the split-tap lip-sync fallback.
-    private void OnRemoteAudio(float[] data, int channels, int sampleRate)
+    // Play the agent voice through the agent avatar's AudioSource so its existing
+    // OVR Lip Sync moves the mouth (minimal path). Falls back to nothing if no sink.
+    private void RouteToAgentSink()
     {
-        if (tearingDown || lipSyncContext == null) return;
-        lipSyncContext.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
+        if (remoteTrack == null || agentSink == null) return;
+        agentSink.SetTrack(remoteTrack);
+        agentSink.loop = true;
+        agentSink.Play();
     }
 
-    private void OnDcOpen()
+    private void TrySendClientReady()
     {
-        Debug.Log("[Pipecat] data channel open -> sending client-ready");
+        if (clientReadySent || !dcReady || !greetReleased || dc == null) return;
+        if (dc.ReadyState != RTCDataChannelState.Open) return;
         string id = Guid.NewGuid().ToString().Substring(0, 8);
         string clientReady =
             "{\"id\":\"" + id + "\",\"label\":\"rtvi-ai\",\"type\":\"client-ready\",\"data\":{\"version\":\"" +
             rtviVersion + "\",\"about\":{\"library\":\"unity-webrtc\"}}}";
         dc.Send(clientReady);
+        clientReadySent = true;
+        Debug.Log("[Pipecat] client-ready sent -> agent will greet now");
+    }
+
+    private void OnDcOpen()
+    {
+        Debug.Log("[Pipecat] data channel open (connection ready; greeting held until Start)");
+        dcReady = true;
+        IsConnected = true;
+        TrySendClientReady(); // sends only if Start was already pressed (slow-ICE case)
+    }
+
+    private void OnRemoteAudio(float[] data, int channels, int sampleRate)
+    {
+        if (tearingDown || lipSyncContext == null) return;
+        lipSyncContext.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 
     private void OnDcMessage(byte[] bytes)
@@ -212,7 +249,9 @@ public class PipecatClient : MonoBehaviour
 
     private void Update()
     {
-        if (dc != null && dc.ReadyState == RTCDataChannelState.Open)
+        if (dc == null) return;
+
+        if (dc.ReadyState == RTCDataChannelState.Open)
         {
             keepAliveTimer += Time.deltaTime;
             if (keepAliveTimer >= 1f)
@@ -221,16 +260,17 @@ public class PipecatClient : MonoBehaviour
                 dc.Send("ping: " + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             }
         }
+
+        // Mic is hot only while the study's conversation gate is open. (The gate is
+        // closed at neutral spawn / during briefing / after run-end.) Muting the
+        // track transmits silence without renegotiating — the session stays up.
+        bool micShouldBeHot = StudyControls.conversationGateOpen;
+        if (micTrack != null && micTrack.Enabled != micShouldBeHot)
+            micTrack.Enabled = micShouldBeHot;
     }
 
     private void OnDestroy()
     {
-        tearingDown = true;
-        if (remoteTrack != null) remoteTrack.onReceived -= OnRemoteAudio;
-        if (dc != null) dc.Close();
-        if (micTrack != null) micTrack.Dispose();
-        if (sendStream != null) sendStream.Dispose();
-        if (pc != null) pc.Close();
-        if (!string.IsNullOrEmpty(micDevice)) Microphone.End(micDevice);
+        Disconnect();
     }
 }

@@ -24,8 +24,6 @@ public class StudyTasks : MonoBehaviour
     private static List<Image> inventoryImagesOnUI = new List<Image>();
     private static List<TMP_Text> inventoryTextOnUI = new List<TMP_Text>();
 
-    private static MicrophoneHandler microphoneHandler;
-
     private void InitializeFirstTask()
     {
         taskStringsForDisplay = new List<string>
@@ -115,7 +113,8 @@ public class StudyTasks : MonoBehaviour
         taskStringsForDisplay.Add(task);
 
         SetUpdatedTaskText();
-        microphoneHandler.PlayNewTaskAvailableNotificationSound();
+        // SEAM (Pipecat): new-task notification sound was played via the old
+        // MicrophoneHandler. Unreachable under oneOffConversations anyway.
     }
 
     private static void SetUpdatedTaskText()
@@ -142,12 +141,6 @@ public class StudyTasks : MonoBehaviour
 
     private void Start()
     {
-        microphoneHandler = FindObjectOfType<MicrophoneHandler>();
-        if (microphoneHandler == null)
-        {
-            Debug.LogError("MicrophoneHandler not found.");
-        }
-
         taskTexts = FindObjectsOfType<TMP_Text>().Where(t => t.name == "task_ui_text").ToList();
 
         // all gameobjects name "mic_active_object" need to be found even if they are disabled

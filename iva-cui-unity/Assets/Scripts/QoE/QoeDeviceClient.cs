@@ -284,7 +284,6 @@ namespace QoeDevice {
         GameObject connStatusGo;
         GameObject errorGo;
         RectTransform centerRegion;
-        MicrophoneHandler micHandler;
         string lastError = "";
 
         void Awake()     { instance = this; }
@@ -830,15 +829,13 @@ namespace QoeDevice {
         }
 
         void UpdateMicDot() {
+            // SEAM (Pipecat): recording state came from the old MicrophoneHandler.
+            // The WebRTC client will re-source it later; show idle for now.
             if (micDot == null) return;
-            if (micHandler == null) micHandler = FindObjectOfType<MicrophoneHandler>();
-            bool recording = micHandler != null && micHandler.IsRecording;
-            var want = recording ? kMicRecording : kMicIdle;
-            if (micDot.color != want) micDot.color = want;
+            if (micDot.color != kMicIdle) micDot.color = kMicIdle;
             if (micLabel != null) {
-                string txt = recording ? "REC" : "MIC";
-                if (micLabel.text != txt) micLabel.text = txt;
-                if (micLabel.color != want) micLabel.color = want;
+                if (micLabel.text != "MIC") micLabel.text = "MIC";
+                if (micLabel.color != kMicIdle) micLabel.color = kMicIdle;
             }
         }
 
@@ -1143,13 +1140,10 @@ namespace QoeDevice {
             LLMAgents.AgentSelectionController.StopAllAgents();
             TrainingSceneController.StopAudio();
             if (StudyControls.instance != null) StudyControls.instance.ResetConversationState();
-            if (activeTaskIndex >= 0 && activeTaskIndex < kTaskBackendScenes.Length) {
-                string backendScene = kTaskBackendScenes[activeTaskIndex];
-                ServerInterface.RefreshScene(backendScene);
-                QoeLog.Event("task", $"end-of-run cleanup: stopped agents, reset mic, refreshed backend scene '{backendScene}'");
-            } else {
-                QoeLog.Event("task", "end-of-run cleanup: stopped agents, reset mic (no backend scene to refresh)");
-            }
+            // SEAM (Pipecat): the old HTTP backend refresh (per-scene conversation
+            // reset) is gone. The WebRTC client re-establishes per-agent state via
+            // reconnect on the next encounter, so there's nothing to refresh here.
+            QoeLog.Event("task", "end-of-run cleanup: stopped agents, reset conversation state");
         }
 
         void TeleportToTask(int taskIndex) {
@@ -1167,9 +1161,8 @@ namespace QoeDevice {
             var spawn = taskSpawnPoints[taskIndex];
             playerTransform.SetPositionAndRotation(spawn.position, Quaternion.LookRotation(spawn.right));
             SnapHud();
-            string backendScene = kTaskBackendScenes[taskIndex];
-            ServerInterface.RefreshScene(backendScene);
-            QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]} (backend scene '{backendScene}')");
+            // SEAM (Pipecat): no HTTP backend scene-refresh on teleport anymore.
+            QoeLog.Event("task", $"teleported to {kTaskLabels[taskIndex]}");
             SetHud($"Teleported to {kTaskLabels[taskIndex]}");
         }
 

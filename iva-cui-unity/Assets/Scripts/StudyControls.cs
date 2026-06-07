@@ -22,8 +22,9 @@ public class StudyControls : MonoBehaviour
 
     private static string userStudySceneName;
 
-    [SerializeField] private MicrophoneHandler microphoneHandler;
-    [SerializeField] private ServerInterface test_ServerInterface;
+    // SEAM (Pipecat): the old push-to-talk mic + HTTP backend were removed here.
+    // The WebRTC/Pipecat client will own continuous mic capture; this class keeps
+    // the conversation gate + thinking-state plumbing the study still needs.
 
     public delegate void OnASRResponseReceived(string text);
 
@@ -271,97 +272,14 @@ public class StudyControls : MonoBehaviour
         }
     }
 
+    // SEAM (Pipecat): the push-to-talk mic button is gone. The WebRTC client
+    // streams continuously; turn boundaries come from server VAD events, not a
+    // button. Left as a no-op so the M/controller key bindings (above) don't
+    // error. The conversationGateOpen flag is still the authority on when the
+    // subject may talk — the Pipecat client should consult it before streaming.
     private void HandleMicButtonInput()
     {
-        if (!microphoneHandler.IsRecording)
-        {
-            // Conversation gate (QoE): the subject hasn't pressed "Start" yet
-            // (still reading the briefing) or the run has ended. Stay silent —
-            // this isn't a mic failure, so don't play the "unavailable" sound.
-            if (!conversationGateOpen)
-            {
-                return;
-            }
-
-            if (AgentSelectionController.currentZone == null)
-            {
-                Debug.LogWarning("No active zone. NOT activating mic.");
-                microphoneHandler.PlayMicUnavailableSound();
-                return;
-            }
-
-            if (AgentSelectionController.SomeoneIsSpeaking())
-            {
-                Debug.LogWarning("Agent is currently speaking. NOT activating mic.");
-                microphoneHandler.PlayMicUnavailableSound();
-                return;
-            }
-
-            if (someoneIsThinking)
-            {
-                Debug.LogWarning("Agent is currently thinking. NOT activating mic.");
-                microphoneHandler.PlayMicUnavailableSound();
-                return;
-            }
-
-            SceneProfiling.ResetTimes();
-            SceneProfiling.SetRandomRequestId();
-
-            SceneProfiling.speakStart = Time.time;
-
-            microphoneHandler.StartRecording();
-
-            if (USE_NEW_LOOKAWAY)
-            {
-                // do nothing
-            }
-            else
-            {
-                AgentSelectionController.currentZone?.LookAtPlayer(true);
-            }
-
-            AgentSelectionController.currentZone?.SetIsListening();
-
-            speakingToThisAgent = AgentSelectionController.currentZone.GetZoneAgentType();
-            SetUserStudyCondition(speakingToThisAgent);
-        }
-        else
-        {
-            SceneProfiling.speakEnd = Time.time;
-
-            microphoneHandler.StopRecording();
-
-            if (USE_NEW_LOOKAWAY)
-            {
-                // do nothing
-            }
-            else if (waitIndicatorType == WaitIndicatorType.Natural)
-            {
-                AgentSelectionController.currentZone?.LookAtPlayer(false);
-            }
-
-            var agentWithActiveZone = AgentSelectionController.currentZone?.GetZoneAgentType();
-            if (speakingToThisAgent != agentWithActiveZone)
-            {
-                Debug.LogWarning("Agent changed while speaking. NOT sending ASR request.");
-                return;
-            }
-
-            AgentSelectionController.currentZone?.MarkAsInteractedAtLeastOnce();
-            AgentSelectionController.currentZone?.SetThinkingStatus(waitIndicatorType, true);
-
-            someoneIsThinking = true;
-            StartThinkingTimeout();
-
-            // QoE telemetry: capture the run epoch NOW (synchronously, while we're
-            // unambiguously in this run) and carry it through the async pipeline to
-            // RecordTurn. If the run ends before the reply arrives, the epoch won't
-            // match the next run and the stale turn is dropped instead of polluting it.
-            int turnEpoch = QoeDevice.QoeTurnLog.CurrentEpoch;
-
-            var audioBytes = microphoneHandler.GetLatestMicAudioBytes();
-            SendASRRequest(audioBytes, turnEpoch);
-        }
+        // intentionally empty — see seam note above.
     }
 
     // Stuck-mic guard. someoneIsThinking is set when the user finishes speaking
@@ -403,21 +321,6 @@ public class StudyControls : MonoBehaviour
             StopCoroutine(thinkingTimeoutCoroutine);
             thinkingTimeoutCoroutine = null;
         }
-        if (microphoneHandler != null && microphoneHandler.IsRecording)
-        {
-            microphoneHandler.StopRecording();
-        }
-    }
-
-    public void SendASRRequest(byte[] audioBytes, int turnEpoch)
-    {
-        StartCoroutine(test_ServerInterface.UploadAudioBytes(audioBytes, text => OnFinishASR(text, turnEpoch)));
-    }
-
-    private void OnFinishASR(string text, int turnEpoch)
-    {
-        ConversationLogger.LogUserMessage(speakingToThisAgent, text);
-        // QoE telemetry: carry the run epoch + user transcript through to RecordTurn.
-        StartCoroutine(test_ServerInterface.SendTextToSpeechRequest(speakingToThisAgent, text, turnEpoch));
+        // SEAM (Pipecat): the WebRTC client owns mic capture now; nothing to stop here.
     }
 }

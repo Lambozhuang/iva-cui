@@ -34,8 +34,6 @@ public class TrainingSceneController : MonoBehaviour
     private static Dictionary<InventoryItem, Sprite> inventorySprites;
     private static List<Image> inventorySlotsOnUI = new List<Image>();
 
-    private static MicrophoneHandler microphoneHandler;
-
     private static readonly List<string> tasks = new List<string>
     {
         "(1) Move forward",
@@ -74,7 +72,7 @@ public class TrainingSceneController : MonoBehaviour
         }
         AdvanceTaskOnUI(tasks[trainingPhaseIdx]);
         trainingPhaseIdx++;
-        microphoneHandler.PlayNewTaskAvailableNotificationSound();
+        // SEAM (Pipecat): task-available sound played via the old MicrophoneHandler.
     }
 
     private void InitializeTaskUI()
@@ -147,11 +145,7 @@ public class TrainingSceneController : MonoBehaviour
         // Refresh now happens per-teleport in QoeDeviceClient.TeleportToTask,
         // which resets the correct scene right before the player talks.
 
-        microphoneHandler = FindObjectOfType<MicrophoneHandler>();
-        if (microphoneHandler == null)
-        {
-            Debug.LogError("MicrophoneHandler not found.");
-        }
+        // SEAM (Pipecat): mic capture is owned by the WebRTC client now.
 
         // The mic pipeline below is the only part of this controller the QoE study
         // needs. The quest task-UI / inventory walkthrough is one-off-disabled, so
@@ -261,45 +255,14 @@ public class TrainingSceneController : MonoBehaviour
         }
     }
 
+    // SEAM (Pipecat): push-to-talk mic + HTTP ASR/TTS removed. The WebRTC client
+    // streams continuously; the training pipeline below (PrintTranscription... /
+    // GenerateResponseToTranscription / Training_DownloadAndPlayAudio) is now
+    // unreachable and kept only as a reference for the later port. No-op so the
+    // mic-button binding doesn't error.
     private void HandleMicButtonInput()
     {
-        if (!microphoneHandler.IsRecording)
-        {
-            // Conversation gate (QoE): subject hasn't pressed "Start" yet, or the
-            // run has ended. Stay silent — mirrors StudyControls' zone pipeline.
-            if (!StudyControls.conversationGateOpen)
-            {
-                return;
-            }
-
-            if (isThinking || botAudioSource.isPlaying)
-            {
-                microphoneHandler.PlayMicUnavailableSound();
-                return;
-            }
-            // QoE telemetry: the Training pipeline records its own latency stages so
-            // a training turn produces the same telemetry record as a zone turn (it
-            // recorded nothing before). Mirrors StudyControls' zone mic-press path.
-            SceneProfiling.ResetTimes();
-            SceneProfiling.SetRandomRequestId();
-            SceneProfiling.speakStart = Time.time;
-            microphoneHandler.StartRecording();
-            SetMicActiveObjects(true);
-        }
-        else
-        {
-            SceneProfiling.speakEnd = Time.time;
-            microphoneHandler.StopRecording();
-            SetMicActiveObjects(false);
-            // QoE telemetry: capture the run epoch now and carry it through the async
-            // pipeline so a reply arriving after the run ends is dropped (see QoeTurnLog).
-            int turnEpoch = QoeDevice.QoeTurnLog.CurrentEpoch;
-            var audioBytes = microphoneHandler.GetLatestMicAudioBytes();
-            StartCoroutine(ServerInterface.instance.UploadAudioBytes(audioBytes, t => PrintTranscriptionAndSendResponseGenerationRequest(t, turnEpoch)));
-            timeStamp_UserFinishedInput = Time.time;
-            isThinking = true;
-            thinkingTimeoutCoroutine = StartCoroutine(ThinkingTimeout());
-        }
+        // intentionally empty — see seam note above.
     }
 
     private static int micInputsDone = 0;
@@ -324,9 +287,9 @@ public class TrainingSceneController : MonoBehaviour
         // Use the Inspector-configured backend host (not hardcoded 127.0.0.1) so
         // Training works on the netem topology where Unity and the backend are on
         // separate machines.
-        string baseUrl = ServerInterface.instance != null
-            ? ServerInterface.instance.MiddlewareBaseUrl
-            : "http://127.0.0.1:8000";
+        // SEAM (Pipecat): old HTTP middleware host. This method is unreachable now
+        // (mic button is a no-op); kept only as a reference for the WebRTC port.
+        string baseUrl = "http://127.0.0.1:8000";
         string url = $"{baseUrl}/speak/agent1/?q={encodedText}";
 
         print($"Sending a request to middleware server");

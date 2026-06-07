@@ -67,26 +67,8 @@ public class ApplyVRSettings : MonoBehaviour
 
     private void ApplySettings()
     {
-        MicrophoneHandler microphoneHandler = FindObjectOfType<MicrophoneHandler>();
-        if (microphoneHandler == null)
-        {
-            Debug.LogError("MicrophoneHandler not found when applying VR Settings");
-            return;
-        }
-
-        // Only force the Quest mic when it's actually present (i.e. running on the
-        // headset). On PC / Meta XR Simulator that device doesn't exist, so leave
-        // the Inspector-selected mic alone instead of clobbering it and falling
-        // back to an unintended default.
-        if (System.Array.IndexOf(Microphone.devices, questMicString) >= 0)
-        {
-            microphoneHandler.selectedMicString = questMicString;
-        }
-        else
-        {
-            Debug.Log($"Quest mic '{questMicString}' not present — keeping selected mic '{microphoneHandler.selectedMicString}'.");
-        }
-
+        // SEAM (Pipecat): mic device selection lived on the old MicrophoneHandler.
+        // The WebRTC client picks its own capture device; nothing to set here.
         if (EyeTrackingObject != null)
         {
             EyeTrackingObject.SetActive(true);

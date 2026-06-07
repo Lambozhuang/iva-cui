@@ -28,6 +28,15 @@ public class PipecatClient : MonoBehaviour
     [Tooltip("RTVI protocol version sent in client-ready. 1.0.0 matches the pinned server.")]
     public string rtviVersion = "1.0.0";
 
+    [Header("Microphone")]
+    [Tooltip("Substring of the mic device to use (e.g. \"Realtek\"). Picks the first " +
+             "device whose name contains this. Leave EMPTY to use the system default " +
+             "device[0]. IMPORTANT: do NOT pick a virtual/loopback device (e.g. " +
+             "\"Oculus Virtual Audio Device\") — it captures the rendered output and " +
+             "feeds the agent's own voice back, causing echo. Right-click this " +
+             "component -> 'List Microphone Devices' to see available names in the Console.")]
+    public string micDeviceName = "";
+
     public enum KokoroVoice
     {
         af_heart, af_bella, af_nicole, af_aoede, af_kore, af_sarah,
@@ -132,14 +141,40 @@ public class PipecatClient : MonoBehaviour
 
     // === Connection ===
 
+    // Right-click the component header in the Inspector to dump available mic names.
+    [ContextMenu("List Microphone Devices")]
+    private void ListMicrophoneDevices()
+    {
+        if (Microphone.devices.Length == 0) { Debug.Log("[Pipecat] No microphone devices."); return; }
+        Debug.Log("[Pipecat] Microphone devices:\n  - " + string.Join("\n  - ", Microphone.devices));
+    }
+
+    // Pick the first device whose name contains micDeviceName (case-insensitive);
+    // empty -> device[0]. Avoids blindly grabbing a virtual loopback device.
+    private string ResolveMicDevice()
+    {
+        var devices = Microphone.devices;
+        if (devices.Length == 0) return null;
+        if (!string.IsNullOrEmpty(micDeviceName))
+        {
+            foreach (var d in devices)
+                if (d.IndexOf(micDeviceName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return d;
+            Debug.LogWarning($"[Pipecat] No mic matching '{micDeviceName}' — falling back to '{devices[0]}'. " +
+                             "Right-click -> List Microphone Devices to see exact names.");
+        }
+        return devices[0];
+    }
+
     private IEnumerator InitMic()
     {
-        if (Microphone.devices.Length == 0)
+        micDevice = ResolveMicDevice();
+        if (string.IsNullOrEmpty(micDevice))
         {
             Debug.LogError("[Pipecat] No microphone device found.");
             yield break;
         }
-        micDevice = Microphone.devices[0];
+        Debug.Log($"[Pipecat] Using mic: '{micDevice}'");
         micSource = gameObject.AddComponent<AudioSource>();
         micClip = Microphone.Start(micDevice, true, 1, 48000);
 

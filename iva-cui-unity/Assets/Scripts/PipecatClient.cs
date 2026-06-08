@@ -39,8 +39,13 @@ public class PipecatClient : MonoBehaviour
         bf_emma, bf_isabella, bf_alice, bf_lily, bm_george, bm_fable, bm_lewis, bm_daniel
     }
 
-    [Header("Agent TTS voice (sent at connect time)")]
+    [Header("Agent TTS voice (testing override)")]
+    [Tooltip("Per-agent voice normally comes from the bot (selected by agent_id). " +
+             "Tick to force the voice below instead — for testing only.")]
+    public bool overrideVoice = false;
     public KokoroVoice voice = KokoroVoice.af_heart;
+
+    private string agentId = "";  // t0..t9, set per encounter by QoeDeviceClient
 
     // The agent avatar's OVR Lip Sync context, auto-found on the sink's GameObject
     // at Connect. We drive it via the split-tap (skipAudioSource=true + fed PCM from
@@ -69,7 +74,7 @@ public class PipecatClient : MonoBehaviour
     private bool clientReadySent;
     private bool tearingDown;
 
-    [Serializable] private class OfferBody { public string sdp; public string type; public string pc_id; public bool restart_pc; public string voice; }
+    [Serializable] private class OfferBody { public string sdp; public string type; public string pc_id; public bool restart_pc; public string voice; public string agent_id; }
     [Serializable] private class AnswerBody { public string pc_id; public string sdp; public string type; }
 
     private void Start()
@@ -81,9 +86,11 @@ public class PipecatClient : MonoBehaviour
 
     // Begin connecting to the agent. `sink` is the agent avatar's lip-sync
     // AudioSource the reply should play through (its OVR context drives the mouth).
+    // `agentId` (t0..t9) tells the bot which persona + default voice to use.
     // The greeting is held until OpenConversation().
-    public void Connect(AudioSource sink)
+    public void Connect(AudioSource sink, string agentId)
     {
+        this.agentId = agentId;
         if (pc != null) { Debug.LogWarning("[Pipecat] Connect() called while already connected — ignoring."); return; }
         agentSink = sink;
 
@@ -219,7 +226,9 @@ public class PipecatClient : MonoBehaviour
         while (pc.GatheringState != RTCIceGatheringState.Complete && gt < 5f) { gt += Time.deltaTime; yield return null; }
         Debug.Log($"[Pipecat] ICE gathering: {pc.GatheringState} ({gt:F1}s)");
 
-        var body = new OfferBody { sdp = pc.LocalDescription.sdp, type = "offer", pc_id = "", restart_pc = false, voice = voice.ToString() };
+        // voice only when overriding for tests; empty = use the agent's default voice.
+        var body = new OfferBody { sdp = pc.LocalDescription.sdp, type = "offer", pc_id = "", restart_pc = false,
+                                   voice = overrideVoice ? voice.ToString() : "", agent_id = agentId };
         string json = JsonUtility.ToJson(body);
 
         using (var req = new UnityWebRequest(offerUrl, "POST"))

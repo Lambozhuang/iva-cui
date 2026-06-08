@@ -97,6 +97,11 @@ namespace QoeDevice {
         // Maps task index → sceneRoots index: 0=Training, 1-3=City, 4-6=Hotel, 7-9=Museum.
         static readonly int[] kTaskSceneRoot = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3 };
 
+        // agent_id sent to the Pipecat bot per task index. The bot looks this up to
+        // pick the agent's persona + default voice (agents_config.py AGENTS dict).
+        // Parallel to kTaskLabels: t0=Training, t1-3=City, t4-6=Hotel, t7-9=Museum.
+        static readonly string[] kTaskAgentIds = { "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9" };
+
         [Header("Screen fade (VR comfort)")]
         [Tooltip("Auto-created on this GameObject if left null.")]
         public ScreenFader fader;
@@ -777,7 +782,9 @@ namespace QoeDevice {
             if (pipecat != null) {
                 AudioSource sink = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentAudioSources.Length)
                     ? taskAgentAudioSources[activeTaskIndex] : null;
-                pipecat.Connect(sink);
+                string agentId = (activeTaskIndex >= 0 && activeTaskIndex < kTaskAgentIds.Length)
+                    ? kTaskAgentIds[activeTaskIndex] : "t4";
+                pipecat.Connect(sink, agentId);
             }
             QoeLog.Event("task", $"briefing shown for '{activeLabel}' — connecting agent, waiting for Start");
         }

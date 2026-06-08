@@ -57,11 +57,13 @@ public class PipecatClient : MonoBehaviour
     // True once the peer connection + data channel are up (greeting still held).
     public bool IsConnected { get; private set; }
 
-    // True once the agent's audio is actually flowing (first onReceived). Since the
-    // greeting plays during briefing, this means "the agent has started talking" —
-    // QoeDeviceClient gates the Start button on this so Start lights up only when the
-    // agent is genuinely audible, not just when the socket connected.
-    public bool IsReceivingAudio { get; private set; }
+    // True once the agent has audibly begun speaking — driven by the RTVI
+    // 'bot-started-speaking' event, NOT raw onReceived PCM (which flows during
+    // connection/buffering before any audible speech). Since the greeting plays
+    // during briefing, this means "the agent has started its greeting" —
+    // QoeDeviceClient gates the Start button on this so Start lights up only once
+    // the agent is genuinely talking.
+    public bool HasAgentSpoken { get; private set; }
 
     private RTCPeerConnection pc;
     private RTCDataChannel dc;
@@ -150,7 +152,7 @@ public class PipecatClient : MonoBehaviour
         if (!string.IsNullOrEmpty(micDevice)) { Microphone.End(micDevice); micDevice = null; }
         if (micSource != null) { Destroy(micSource); micSource = null; }
         remoteTrack = null; agentSink = null; agentLipSync = null;
-        dcReady = greetReleased = clientReadySent = IsConnected = IsReceivingAudio = false;
+        dcReady = greetReleased = clientReadySent = IsConnected = HasAgentSpoken = false;
         tearingDown = false;
         Debug.Log("[Pipecat] disconnected");
     }
@@ -301,9 +303,7 @@ public class PipecatClient : MonoBehaviour
 
     private void OnRemoteAudio(float[] data, int channels, int sampleRate)
     {
-        if (tearingDown) return;
-        if (!IsReceivingAudio) IsReceivingAudio = true; // first agent audio frame
-        if (agentLipSync == null) return;
+        if (tearingDown || agentLipSync == null) return;
         agentLipSync.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 
@@ -323,10 +323,14 @@ public class PipecatClient : MonoBehaviour
         // No "talking" animation exists — we hold the listening pose + face the
         // player while the bot speaks (as the old pipeline did), release on stop.
         // Field-agnostic substring match on the RTVI envelope.
-        if (agentZone != null)
+        if (json.Contains("bot-started-speaking"))
         {
-            if (json.Contains("bot-started-speaking")) agentZone.SetBotSpeaking(true);
-            else if (json.Contains("bot-stopped-speaking")) agentZone.SetBotSpeaking(false);
+            HasAgentSpoken = true; // gates the Start button (agent is now audibly talking)
+            if (agentZone != null) agentZone.SetBotSpeaking(true);
+        }
+        else if (json.Contains("bot-stopped-speaking"))
+        {
+            if (agentZone != null) agentZone.SetBotSpeaking(false);
         }
 
         // Done-button auto-reveal: the agent appends "<END>" to its farewell when the

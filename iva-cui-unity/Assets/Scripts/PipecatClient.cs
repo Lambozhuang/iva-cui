@@ -55,8 +55,13 @@ public class PipecatClient : MonoBehaviour
     private bool agentLipSyncOriginalSkip;
 
     // True once the peer connection + data channel are up (greeting still held).
-    // QoeDeviceClient gates the Start button on this.
     public bool IsConnected { get; private set; }
+
+    // True once the agent's audio is actually flowing (first onReceived). Since the
+    // greeting plays during briefing, this means "the agent has started talking" —
+    // QoeDeviceClient gates the Start button on this so Start lights up only when the
+    // agent is genuinely audible, not just when the socket connected.
+    public bool IsReceivingAudio { get; private set; }
 
     private RTCPeerConnection pc;
     private RTCDataChannel dc;
@@ -136,7 +141,7 @@ public class PipecatClient : MonoBehaviour
         if (!string.IsNullOrEmpty(micDevice)) { Microphone.End(micDevice); micDevice = null; }
         if (micSource != null) { Destroy(micSource); micSource = null; }
         remoteTrack = null; agentSink = null; agentLipSync = null;
-        dcReady = greetReleased = clientReadySent = IsConnected = false;
+        dcReady = greetReleased = clientReadySent = IsConnected = IsReceivingAudio = false;
         tearingDown = false;
         Debug.Log("[Pipecat] disconnected");
     }
@@ -287,7 +292,9 @@ public class PipecatClient : MonoBehaviour
 
     private void OnRemoteAudio(float[] data, int channels, int sampleRate)
     {
-        if (tearingDown || agentLipSync == null) return;
+        if (tearingDown) return;
+        if (!IsReceivingAudio) IsReceivingAudio = true; // first agent audio frame
+        if (agentLipSync == null) return;
         agentLipSync.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 

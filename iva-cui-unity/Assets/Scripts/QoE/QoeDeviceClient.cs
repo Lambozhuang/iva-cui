@@ -842,8 +842,8 @@ namespace QoeDevice {
 
             // Re-enable the Start button the moment the Pipecat connection comes up
             // during briefing (UpdateButtonStates otherwise only runs on transitions).
-            if (pipecat != null && phase == DevicePhase.Briefing && pipecat.IsConnected != lastPipecatConnected) {
-                lastPipecatConnected = pipecat.IsConnected;
+            if (pipecat != null && phase == DevicePhase.Briefing && pipecat.IsReceivingAudio != lastPipecatConnected) {
+                lastPipecatConnected = pipecat.IsReceivingAudio;
                 UpdateButtonStates();
             }
         }
@@ -1295,9 +1295,10 @@ namespace QoeDevice {
             SetBtn(connectButton,     phase == DevicePhase.Idle && !isConnecting && !wsOpen);
             SetBtn(disconnectButton,  canDisconnect);
             SetBtn(sendReadyButton,   phase == DevicePhase.TaskReceived);
-            // Start is gated until the Pipecat connection is up (so the greeting can
-            // fire immediately on press). If no pipecat is assigned, don't block.
-            SetBtn(startButton,       phase == DevicePhase.Briefing && (pipecat == null || pipecat.IsConnected));
+            // Start is gated until the agent's audio is actually flowing (the greeting
+            // has begun) — not merely the socket being up — so the subject can't Start
+            // into dead air during the cold-start. If no pipecat is assigned, don't block.
+            SetBtn(startButton,       phase == DevicePhase.Briefing && (pipecat == null || pipecat.IsReceivingAudio));
             SetBtn(doneButton,        phase == DevicePhase.RunningTask && conversationWrappedUp);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();

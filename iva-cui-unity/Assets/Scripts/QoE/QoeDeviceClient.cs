@@ -171,10 +171,11 @@ namespace QoeDevice {
         // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
         static readonly string[] kTaskBriefings = {
             // 0 Training
-            "Welcome! In this study you'll have a series of short conversations with virtual people. This first one is just practice.\n\n" +
-            "How it works: each conversation has a time limit, shown as a countdown — it's only an upper limit, so don't rush. When you feel the conversation is finished, simply say goodbye and the person will wrap up; a Done button will then appear for you to continue. It's completely fine if the time runs out before you finish — that's normal and expected, so just chat naturally and don't worry about the clock.\n\n" +
+            "This is a practice conversation with Alfred, a friendly assistant — a chance to warm up and get a feel for the range of connection quality you'll experience across the study. Some conversations may feel smoother than others; that's all part of it.\n\n" +
+            "To talk, just speak naturally out loud, and you can interrupt the agent at any time, even while it's still speaking.\n\n" +
+            "Each conversation has a time limit, shown as a countdown — it's only an upper limit, so don't rush. When you feel the conversation is finished, simply say goodbye and the agent will wrap up; a Done button will then appear for you to continue. It's completely fine if the time runs out before you finish — that's normal and expected, so just chat naturally and don't worry about the clock.\n\n" +
             "After each conversation you'll be asked a few quick questions about how it felt, then you'll move on to the next one.\n\n" +
-            "Right now you're with Alfred, a friendly assistant. Say hello and chat with him to get comfortable — to speak, press the microphone button on your right controller, and press it again when you finish talking.",
+            "When you're ready, press Start, then say hello and have a chat with Alfred.",
             // 1–3 City (Shirts)
             "You're at your friend Sage's place, just hanging out. Catch up with them and chat about whatever comes to mind.",
             "You're in a clothing store, talking to Niko, the shop clerk. Strike up a conversation — ask about the store or whatever you're curious about.",
@@ -584,8 +585,6 @@ namespace QoeDevice {
         }
 
         const string kWelcomeIdle =
-            "Welcome to the study!\n\n" +
-            "You'll have a series of short conversations with virtual people. " +
             "Please wait here — the next conversation will begin shortly.";
         const string kWelcomeReady =
             "Ready for the next conversation.\n\n" +

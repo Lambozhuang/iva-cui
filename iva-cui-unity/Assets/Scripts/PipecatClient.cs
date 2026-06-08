@@ -302,6 +302,17 @@ public class PipecatClient : MonoBehaviour
         // OnMessage fires on the Unity main thread, so this is safe. No-op between
         // runs (the briefing greeting is before BeginRun, correctly not captured).
         QoeDevice.QoeTurnLog.RecordRawEvent(json);
+
+        // Done-button auto-reveal: the agent appends "<END>" to its farewell when the
+        // user signals they're done (agents_config.py SHARED_STYLE). It is not stripped
+        // server-side, so it arrives here in the bot's text (bot-llm-text/bot-tts-text).
+        // A substring match on the raw message is robust to which field carries it.
+        // Reveals the Done button; NotifyConversationOver is guarded (RunningTask only,
+        // idempotent) so a match in the briefing greeting or a repeat is harmless.
+        if (json.Contains("<END>"))
+        {
+            QoeDevice.QoeDeviceClient.NotifyConversationOver();
+        }
     }
 
     private void Update()

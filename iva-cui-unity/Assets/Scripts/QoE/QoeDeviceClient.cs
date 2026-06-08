@@ -85,6 +85,11 @@ namespace QoeDevice {
                  "taskSpawnPoints: [0]=Training, [1..3]=City, [4..6]=Hotel, [7..9]=Museum. " +
                  "The agent voice plays through this so the avatar's OVR Lip Sync moves the mouth.")]
         public AudioSource[] taskAgentAudioSources = new AudioSource[10];
+        [Tooltip("The agent's ActivationZone per task index (parallel to the above). " +
+                 "Drives the look-at-player / attentive pose while talking. The zone is a " +
+                 "sibling of the lip-sync AudioSource (not an ancestor), so it must be wired " +
+                 "explicitly here rather than found by walking up from the AudioSource.")]
+        public ActivationZone[] taskAgentZones = new ActivationZone[10];
 
         [Header("Scene culling (performance)")]
         [Tooltip("Optional. The four scene roots in QoE_Shell: [0]=Training, [1]=City, " +
@@ -766,9 +771,11 @@ namespace QoeDevice {
             if (pipecat != null) {
                 AudioSource sink = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentAudioSources.Length)
                     ? taskAgentAudioSources[activeTaskIndex] : null;
+                ActivationZone zone = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentZones.Length)
+                    ? taskAgentZones[activeTaskIndex] : null;
                 string agentId = (activeTaskIndex >= 0 && activeTaskIndex < kTaskAgentIds.Length)
                     ? kTaskAgentIds[activeTaskIndex] : "t4";
-                pipecat.Connect(sink, agentId);
+                pipecat.Connect(sink, agentId, zone);
                 pipecat.OpenConversation(); // release greeting now (held until DC opens)
             }
             QoeLog.Event("task", $"briefing shown for '{activeLabel}' — connecting agent + greeting, waiting for Start");

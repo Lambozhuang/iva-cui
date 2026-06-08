@@ -96,17 +96,18 @@ public class PipecatClient : MonoBehaviour
     // AudioSource the reply should play through (its OVR context drives the mouth).
     // `agentId` (t0..t9) tells the bot which persona + default voice to use.
     // The greeting is held until OpenConversation().
-    public void Connect(AudioSource sink, string agentId)
+    public void Connect(AudioSource sink, string agentId, ActivationZone zone)
     {
         this.agentId = agentId;
         if (pc != null) { Debug.LogWarning("[Pipecat] Connect() called while already connected — ignoring."); return; }
         agentSink = sink;
 
-        // The agent's ActivationZone (drives the attentive talking pose). The sink is
-        // the avatar's lip-sync AudioSource; the zone is on an ancestor.
-        agentZone = sink != null ? sink.GetComponentInParent<ActivationZone>() : null;
+        // The agent's ActivationZone (drives the look-at-player / attentive pose while
+        // talking). Passed in explicitly by QoeDeviceClient — the zone is a SIBLING of
+        // the lip-sync AudioSource, not an ancestor, so it can't be found by walking up.
+        agentZone = zone;
         if (agentZone == null && sink != null)
-            Debug.LogWarning($"[Pipecat] No ActivationZone above {sink.gameObject.name} — agent won't animate while talking.");
+            Debug.LogWarning($"[Pipecat] No ActivationZone wired for {sink.gameObject.name} — agent won't animate while talking.");
 
         // Find the agent's OVR Lip Sync context (on the sink GameObject) and switch
         // it to the split-tap: it stops reading its own AudioSource (which produces a

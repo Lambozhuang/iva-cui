@@ -269,8 +269,6 @@ namespace QoeDevice {
         static readonly Color kRed          = new(0.8f,  0.35f, 0.25f);
         static readonly Color kTaskBtn      = new(0.3f,  0.4f,  0.55f);
         static readonly Color kPreview      = new(0.45f, 0.45f, 0.5f);
-        static readonly Color kMicRecording = new(0.9f,  0.2f,  0.2f);
-        static readonly Color kMicIdle      = new(0.32f, 0.32f, 0.38f);
 
         TMP_Text logText;
         TMP_Text timerText;
@@ -287,8 +285,6 @@ namespace QoeDevice {
         // The Done button stays hidden until this flips, so it isn't offered from
         // the start of the run. Reset at the start of each run.
         bool conversationWrappedUp;
-        Image    micDot;
-        TMP_Text micLabel;
         TMP_Text connStatusText;
         TMP_Text errorText;
         GameObject topLeftGo;
@@ -464,7 +460,7 @@ namespace QoeDevice {
                 if (Application.isPlaying) Destroy(child); else DestroyImmediate(child);
             }
             topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = detailsHeaderGo = welcomeGo = null;
-            timerText = null; micDot = null; micLabel = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null; welcomeText = null;
+            timerText = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null; welcomeText = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -478,24 +474,9 @@ namespace QoeDevice {
             hg.childControlWidth = true; hg.childControlHeight = true;
             hg.childAlignment = TextAnchor.MiddleLeft;
 
-            var dotGo = new GameObject("MicDot", typeof(RectTransform), typeof(Image));
-            dotGo.transform.SetParent(region, false);
-            micDot = dotGo.GetComponent<Image>();
-            micDot.color = kMicIdle;
-            var dotLe = dotGo.AddComponent<LayoutElement>();
-            int dot = ui.Sx(18);
-            dotLe.minWidth = dot; dotLe.preferredWidth = dot; dotLe.flexibleWidth = 0;
-            dotLe.minHeight = dot; dotLe.preferredHeight = dot; dotLe.flexibleHeight = 0;
-
-            // Always visible: shows "MIC" (idle) / "REC" (recording). It used to be
-            // hidden at idle, which left just the gray dot + empty timer — reading
-            // as a featureless gray blob.
-            micLabel = ui.BuildLabel(region, "MIC", 13, FontStyles.Bold, kMicIdle, TextAlignmentOptions.Left);
-            micLabel.enableWordWrapping = false;
-            var mle = micLabel.gameObject.AddComponent<LayoutElement>();
-            mle.minWidth = ui.Sx(30); mle.preferredWidth = ui.Sx(30); mle.flexibleWidth = 0;
-            mle.minHeight = ui.Sx(18); mle.preferredHeight = ui.Sx(18);
-
+            // Mic indicator removed: under open-mic full-duplex WebRTC the client no
+            // longer tracks a per-turn recording state, so the dot/label were a dead
+            // always-idle stub. Just the run timer remains in the top-left region.
             timerText = ui.BuildLabel(region, "0:00", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
             timerText.enableWordWrapping = false;
             var tle = timerText.gameObject.AddComponent<LayoutElement>();
@@ -858,24 +839,12 @@ namespace QoeDevice {
             ws?.DispatchMessageQueue(); // NativeWebSocket requires manual pump on non-WebGL
 #endif
             while (mainQ.TryDequeue(out var a)) a();
-            UpdateMicDot();
 
             // Re-enable the Start button the moment the Pipecat connection comes up
             // during briefing (UpdateButtonStates otherwise only runs on transitions).
             if (pipecat != null && phase == DevicePhase.Briefing && pipecat.IsConnected != lastPipecatConnected) {
                 lastPipecatConnected = pipecat.IsConnected;
                 UpdateButtonStates();
-            }
-        }
-
-        void UpdateMicDot() {
-            // SEAM (Pipecat): recording state came from the old MicrophoneHandler.
-            // The WebRTC client will re-source it later; show idle for now.
-            if (micDot == null) return;
-            if (micDot.color != kMicIdle) micDot.color = kMicIdle;
-            if (micLabel != null) {
-                if (micLabel.text != "MIC") micLabel.text = "MIC";
-                if (micLabel.color != kMicIdle) micLabel.color = kMicIdle;
             }
         }
 

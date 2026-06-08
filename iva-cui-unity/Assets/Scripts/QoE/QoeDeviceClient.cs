@@ -775,18 +775,22 @@ namespace QoeDevice {
             StudyControls.conversationGateOpen = false;
             if (briefingText != null) briefingText.text = BriefingFor(activeTaskIndex);
             TransitionPhase(DevicePhase.Briefing);
-            // Pipecat: begin connecting to this task's agent NOW (during the brief read)
-            // so the connection is up by the time the subject presses Start. The
-            // greeting is held until OnStartPressed. Start stays disabled until
-            // pipecat.IsConnected (see UpdateButtonStates).
+            // Pipecat: connect to this task's agent NOW and release its greeting so it
+            // introduces itself WHILE the subject reads the brief. This hides the
+            // connection + first-inference cold-start (cold TTS ~5s) off the timed
+            // clock and warms the pipeline, so the subject's first real utterance gets
+            // a fast reply. The mic stays muted during briefing (gated on
+            // conversationGateOpen, still false) — so the greeting is one-way preamble,
+            // NOT a measured turn. Start just opens the gate + timer (OnStartPressed).
             if (pipecat != null) {
                 AudioSource sink = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentAudioSources.Length)
                     ? taskAgentAudioSources[activeTaskIndex] : null;
                 string agentId = (activeTaskIndex >= 0 && activeTaskIndex < kTaskAgentIds.Length)
                     ? kTaskAgentIds[activeTaskIndex] : "t4";
                 pipecat.Connect(sink, agentId);
+                pipecat.OpenConversation(); // release greeting now (held until DC opens)
             }
-            QoeLog.Event("task", $"briefing shown for '{activeLabel}' — connecting agent, waiting for Start");
+            QoeLog.Event("task", $"briefing shown for '{activeLabel}' — connecting agent + greeting, waiting for Start");
         }
 
         // Start button: the subject has read the context and is ready to talk.
@@ -796,9 +800,8 @@ namespace QoeDevice {
         public void OnStartPressed() {
             if (phase != DevicePhase.Briefing) return;
             StudyControls.conversationGateOpen = true;
-            // Pipecat: release the agent's greeting now (it was held since briefing).
-            // The mic also goes hot as the gate is now open.
-            if (pipecat != null) pipecat.OpenConversation();
+            // Pipecat: greeting was already released at briefing; opening the gate here
+            // just makes the mic hot (PipecatClient gates micTrack on conversationGateOpen).
             conversationWrappedUp = false; // Done button hidden until the agent wraps up
             if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
             // Details section: populate and show only when this task has details.

@@ -204,17 +204,31 @@ process, single backend edit). `kTaskAgentIds` maps task index→agent_id; 10 av
 ### Milestone 5 — ✅ DONE — Study-flow integration
 Folded into M2's hooks: briefing→connect, Start→greeting+gate-open, timer/Done/operator→disconnect.
 
-### Milestone 6 — ◀ NOW — QoE telemetry re-sourcing from RTVI events
-Re-source the deferred study instrumentation from the RTVI data-channel events `PipecatClient` already
-receives (`OnDcMessage`). Three things ride the same events:
-1. **Latency telemetry** — repoint `SceneProfiling`/`QoeTurnLog.RecordTurn` (currently fed by the dead
-   HTTP stages) to RTVI: `speakStart`←user-started-speaking, `speakEnd`←user-stopped-speaking,
-   TTFA←first `bot-started-speaking`/audio delta, response-end←`bot-stopped-speaking`; transcripts←
-   `user-transcription`/`bot-tts-text`; per-stage latency←`metrics` (ttfb/processing). Fill `TurnData`.
-2. **Done-button auto-reveal** — detect the agent wrap-up (`<END>` in bot text, or an end signal) →
-   `NotifyConversationOver()`. Currently dormant (timer backstops).
-3. **Avatar animation states** — drive listening/thinking/talking off `user-/bot-started/stopped-
-   speaking` (the old mic pipeline used to set these; cosmetic).
+### Milestone 6 — ✅ DONE (telemetry + UX) — RTVI events
+Implemented deliberately SIMPLE (per directive: qoe-lab stores the telemetry envelope whole; defining
+a "turn" client-side under open-mic/interruption is fragile → don't):
+- **M6a** (`4ef8d78`) — **greet during briefing**: `OpenConversation()` moved from Start to
+  `EnterBriefing`, so the agent greets + the cold-start (cold TTS ~5s) happen during the brief read,
+  off the timed clock. Start just opens the gate+timer → fast first real reply. Greeting is preamble,
+  not a measured turn (mic muted in briefing).
+- **M6b** (`63743b3`) — **raw RTVI event capture**: `PipecatClient.OnDcMessage` appends every inbound
+  data-channel message verbatim (`{t, msg}`) to `Envelope.rtvi_events` (new `RawEvent`; `schema_version`
+  →2). The complete server-authoritative record (speaking events, transcripts, per-stage `metrics`).
+  **No client-side parsing** — turn definition + latency are offline analysis from this stream.
+- **M6c** (`a490b78`) — **Done-button auto-reveal**: `<END>` substring in inbound bot text →
+  `NotifyConversationOver()`. The typed per-turn `RecordTurn`/`samples[]` rebuild was deliberately NOT
+  done — the raw stream supersedes it; `samples[]` is left empty.
+- **M6d** (`ba62abd`) — removed the vestigial always-idle mic indicator from the HUD.
+
+**Backend caveat (noted, not done):** the bot does not strip `<END>` before TTS, so Kokoro may *speak*
+it. If audible in testing, add a one-line strip in `bot.py` before the TTS branch.
+
+### Milestone 7 — remaining polish (optional / as-needed)
+- **Avatar animation states** (listening/thinking/talking) off the RTVI speaking events — cosmetic;
+  not yet wired (the old mic pipeline drove these).
+- **netem verification** — confirm impairment on the Unity↔Mac hop shows up in the captured timings.
+- **Voice polish** — audition the two UK stand-in voices (Museum t8/t9), swap in `agents_config.py`.
+- **OpenAI Realtime adapter** — optional second backend; now "write one adapter", not core.
 
 ### Who does what
 - **Code (`.cs`/backend `.py` config)** — assistant.

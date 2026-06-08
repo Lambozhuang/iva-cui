@@ -308,6 +308,23 @@ public class PipecatClient : MonoBehaviour
         agentLipSync.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 
+    // DIAGNOSTIC (removable): logs once/sec whether the agent's OVR context is
+    // producing viseme energy. speechActivity = 1 - sil viseme: ~0 when quiet,
+    // rises while talking. If t2/t3 show movement here but the mouth stays still,
+    // the OVR engine IS fed and the problem is the morph-target/mesh mapping; if
+    // it stays ~0, the context isn't receiving audio.
+    private float visemeLogTimer;
+    private void LogVisemeDiag()
+    {
+        if (agentLipSync == null) return;
+        visemeLogTimer += Time.deltaTime;
+        if (visemeLogTimer < 1f) return;
+        visemeLogTimer = 0f;
+        var frame = agentLipSync.GetCurrentPhonemeFrame();
+        if (frame != null && frame.Visemes != null && frame.Visemes.Length > 0)
+            Debug.Log($"[Pipecat] agent={agentId} speechActivity={(1f - frame.Visemes[0]):F3}");
+    }
+
     private void OnDcMessage(byte[] bytes)
     {
         string json = Encoding.UTF8.GetString(bytes);
@@ -348,6 +365,7 @@ public class PipecatClient : MonoBehaviour
 
     private void Update()
     {
+        LogVisemeDiag(); // DIAGNOSTIC (removable)
         if (dc == null) return;
 
         if (dc.ReadyState == RTCDataChannelState.Open)

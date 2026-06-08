@@ -1183,6 +1183,13 @@ namespace QoeDevice {
             SetHud($"Teleported to {kTaskLabels[taskIndex]}");
         }
 
+        [Tooltip("TEMP/DEBUG: when off, scene-root culling is disabled — ALL scene " +
+                 "roots are kept active instead of culling the non-active ones. Used to " +
+                 "test whether culling's activate-timing breaks some avatars' lip-sync " +
+                 "init (OVRLipSyncContextMorphTarget.Start dies if its mesh is inactive " +
+                 "at Start). Turn back on for the real study (perf).")]
+        public bool enableSceneCulling = false;
+
         // Performance: keep only the scene root the player is entering active.
         // No-op unless sceneRoots is assigned in the Inspector. Disabling the
         // other three roots drops their renderers (and the ~70M-triangle total)
@@ -1190,6 +1197,18 @@ namespace QoeDevice {
         // ActivationZone is what selects which agent prompt/voice answers.
         void ActivateOnlySceneFor(int taskIndex) {
             if (sceneRoots == null) return;
+            // Culling disabled (debug): force every scene root active so no avatar's
+            // lip-sync init runs while its mesh is inactive.
+            if (!enableSceneCulling) {
+                bool any = false;
+                for (int i = 0; i < sceneRoots.Length; i++) {
+                    if (sceneRoots[i] == null) continue;
+                    any = true;
+                    if (!sceneRoots[i].activeSelf) sceneRoots[i].SetActive(true);
+                }
+                if (any) QoeLog.Event("perf", "scene culling DISABLED — all scene roots active");
+                return;
+            }
             int want = (taskIndex >= 0 && taskIndex < kTaskSceneRoot.Length) ? kTaskSceneRoot[taskIndex] : -1;
             bool anyAssigned = false;
             for (int i = 0; i < sceneRoots.Length; i++) {

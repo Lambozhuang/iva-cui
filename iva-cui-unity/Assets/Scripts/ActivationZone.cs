@@ -91,6 +91,7 @@ public class ActivationZone : MonoBehaviour
             aimConstraint.constraintActive = true;
             aimConstraint.weight = 0;
         }
+        diagStartRan = true; // DIAGNOSTIC (removable): if false later, Start() threw before here
     }
 
     private void Update()
@@ -171,6 +172,10 @@ public class ActivationZone : MonoBehaviour
     // which early-returns unless playerInZone — the WebRTC path never sets that).
     public void SetBotSpeaking(bool speaking)
     {
+        // DIAGNOSTIC (removable): trace why some agents don't look at the player.
+        Debug.Log($"[Zone] SetBotSpeaking({speaking}) on '{(parentZone != null ? parentZone.name : name)}' " +
+                  $"aimConstraint={(aimConstraint != null ? "ok" : "NULL")} animator={(animator != null ? "ok" : "NULL")} " +
+                  $"startRan={diagStartRan} activeInHier={gameObject.activeInHierarchy}");
         if (speaking)
         {
             SetThinkingStatus(StudyControls.instance.waitIndicatorType, false); // clear any thinking pose/filler
@@ -183,6 +188,8 @@ public class ActivationZone : MonoBehaviour
             StartCoroutine(GraduallyEnableLookAtAimConstraint(false));
         }
     }
+
+    private bool diagStartRan; // DIAGNOSTIC (removable): set at end of Start()
 
     public void SetThinkingStatus(StudyControls.WaitIndicatorType waitIndicatorType, bool val)
     {

@@ -70,6 +70,7 @@ public class PipecatClient : MonoBehaviour
     private AudioStreamTrack remoteTrack;
     private AudioSource micSource;
     private AudioSource agentSink;     // the current agent avatar's lip-sync AudioSource
+    private ActivationZone agentZone;  // its ActivationZone, for talk/listen animation
     private AudioClip micClip;
     private string micDevice;
     private float keepAliveTimer;
@@ -98,6 +99,12 @@ public class PipecatClient : MonoBehaviour
         this.agentId = agentId;
         if (pc != null) { Debug.LogWarning("[Pipecat] Connect() called while already connected — ignoring."); return; }
         agentSink = sink;
+
+        // The agent's ActivationZone (drives the attentive talking pose). The sink is
+        // the avatar's lip-sync AudioSource; the zone is on an ancestor.
+        agentZone = sink != null ? sink.GetComponentInParent<ActivationZone>() : null;
+        if (agentZone == null && sink != null)
+            Debug.LogWarning($"[Pipecat] No ActivationZone above {sink.gameObject.name} — agent won't animate while talking.");
 
         // Find the agent's OVR Lip Sync context (on the sink GameObject) and switch
         // it to the split-tap: it stops reading its own AudioSource (which produces a
@@ -134,6 +141,8 @@ public class PipecatClient : MonoBehaviour
         if (agentSink != null) agentSink.Stop();
         // Reset the agent's OVR context to silence so the mouth stops moving.
         if (agentLipSync != null) agentLipSync.skipAudioSource = agentLipSyncOriginalSkip;
+        // Relax the talking pose.
+        if (agentZone != null) { agentZone.SetBotSpeaking(false); agentZone = null; }
         if (dc != null) { dc.Close(); dc = null; }
         if (micTrack != null) { micTrack.Dispose(); micTrack = null; }
         if (sendStream != null) { sendStream.Dispose(); sendStream = null; }
@@ -309,6 +318,16 @@ public class PipecatClient : MonoBehaviour
         // OnMessage fires on the Unity main thread, so this is safe. No-op between
         // runs (the briefing greeting is before BeginRun, correctly not captured).
         QoeDevice.QoeTurnLog.RecordRawEvent(json);
+
+        // Drive the active agent's attentive pose from the bot's speaking state.
+        // No "talking" animation exists — we hold the listening pose + face the
+        // player while the bot speaks (as the old pipeline did), release on stop.
+        // Field-agnostic substring match on the RTVI envelope.
+        if (agentZone != null)
+        {
+            if (json.Contains("bot-started-speaking")) agentZone.SetBotSpeaking(true);
+            else if (json.Contains("bot-stopped-speaking")) agentZone.SetBotSpeaking(false);
+        }
 
         // Done-button auto-reveal: the agent appends "<END>" to its farewell when the
         // user signals they're done (agents_config.py SHARED_STYLE). It is not stripped

@@ -163,6 +163,27 @@ public class ActivationZone : MonoBehaviour
         }
     }
 
+    // Drive the attentive pose from the WebRTC pipeline's bot-speaking RTVI events.
+    // The animator has NO dedicated "talking" state — attentiveness was always
+    // conveyed by holding the 'listening' pose + aiming the head at the player while
+    // the mouth lip-syncs. So while the bot speaks we hold that pose + face the
+    // player, and relax on stop. Calls the aim coroutine directly (not LookAtPlayer,
+    // which early-returns unless playerInZone — the WebRTC path never sets that).
+    public void SetBotSpeaking(bool speaking)
+    {
+        if (speaking)
+        {
+            SetThinkingStatus(StudyControls.instance.waitIndicatorType, false); // clear any thinking pose/filler
+            animator?.SetBool("IsListening", true);
+            StartCoroutine(GraduallyEnableLookAtAimConstraint(true));
+        }
+        else
+        {
+            animator?.SetBool("IsListening", false);
+            StartCoroutine(GraduallyEnableLookAtAimConstraint(false));
+        }
+    }
+
     public void SetThinkingStatus(StudyControls.WaitIndicatorType waitIndicatorType, bool val)
     {
         switch (waitIndicatorType)

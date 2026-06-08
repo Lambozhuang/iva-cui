@@ -146,6 +146,7 @@ public class PipecatClient : MonoBehaviour
         if (agentLipSync != null) agentLipSync.skipAudioSource = agentLipSyncOriginalSkip;
         // Relax the talking pose.
         if (agentZone != null) { agentZone.SetBotSpeaking(false); agentZone = null; }
+        diagFaceMesh = null; // diagnostic: re-resolve per agent
         if (dc != null) { dc.Close(); dc = null; }
         if (micTrack != null) { micTrack.Dispose(); micTrack = null; }
         if (sendStream != null) { sendStream.Dispose(); sendStream = null; }
@@ -308,21 +309,45 @@ public class PipecatClient : MonoBehaviour
         agentLipSync.ProcessAudioSamplesRaw((float[])data.Clone(), channels);
     }
 
-    // DIAGNOSTIC (removable): logs once/sec whether the agent's OVR context is
-    // producing viseme energy. speechActivity = 1 - sil viseme: ~0 when quiet,
-    // rises while talking. If t2/t3 show movement here but the mouth stays still,
-    // the OVR engine IS fed and the problem is the morph-target/mesh mapping; if
-    // it stays ~0, the context isn't receiving audio.
+    // DIAGNOSTIC (removable): once/sec logs (a) the agent's viseme energy and (b) the
+    // MAX live blendshape weight on the agent's face mesh. This splits the t2/t3
+    // dead-mouth cause:
+    //   viseme>0 AND maxBlend>0  -> morph target IS writing weights; mesh/rig doesn't
+    //                               visibly deform -> avatar asset issue.
+    //   viseme>0 AND maxBlend==0 -> morph target's apply isn't running for this agent.
+    //   viseme==0                -> OVR context not being fed.
     private float visemeLogTimer;
+    private SkinnedMeshRenderer diagFaceMesh; // resolved once from the agent sink's avatar
     private void LogVisemeDiag()
     {
         if (agentLipSync == null) return;
         visemeLogTimer += Time.deltaTime;
         if (visemeLogTimer < 1f) return;
         visemeLogTimer = 0f;
+
+        float speech = 0f;
         var frame = agentLipSync.GetCurrentPhonemeFrame();
         if (frame != null && frame.Visemes != null && frame.Visemes.Length > 0)
-            Debug.Log($"[Pipecat] agent={agentId} speechActivity={(1f - frame.Visemes[0]):F3}");
+            speech = 1f - frame.Visemes[0];
+
+        // Find the face mesh (H_DDS_HighRes) under the agent's avatar root, once.
+        if (diagFaceMesh == null && agentSink != null)
+        {
+            var root = agentZone != null ? agentZone.transform.root : agentSink.transform.root;
+            foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                if (smr.name == "H_DDS_HighRes") { diagFaceMesh = smr; break; }
+        }
+        float maxBlend = 0f;
+        if (diagFaceMesh != null && diagFaceMesh.sharedMesh != null)
+        {
+            int n = diagFaceMesh.sharedMesh.blendShapeCount;
+            for (int i = 0; i < n; i++)
+            {
+                float w = diagFaceMesh.GetBlendShapeWeight(i);
+                if (w > maxBlend) maxBlend = w;
+            }
+        }
+        Debug.Log($"[Pipecat] agent={agentId} speechActivity={speech:F3} maxBlendWeight={maxBlend:F1} faceMesh={(diagFaceMesh != null ? "ok" : "MISSING")}");
     }
 
     private void OnDcMessage(byte[] bytes)

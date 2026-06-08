@@ -151,10 +151,13 @@ prove first). So: PoC defines `IAgentTransport` + `PipecatTransport`; OpenAI bec
 
 ## 5. Work order
 
-> **STATUS (updated):**
-> - **PoC project** (`~/sources/Realtime Voice Agent Test`, separate repo) — **M0–M3 + voice DONE & proven on the study PC:** Unity↔Pipecat WebRTC, agent voice in, full-duplex interruption, OVR Lip Sync driven by the agent audio (visible avatar mouth), per-connection voice dropdown + `bot.py` voice param + `prewarm.py` (all 20 voices cached, offline-ready). Every technical unknown resolved.
-> - **iva-cui teardown — DONE** (commits `377b3ec`→`7e64238` on `qoe/realtime-webrtc`): old HTTP voice pipeline removed (ServerInterface, MicrophoneHandler, AudioMemoryStreamHandler, mic editor); QoE harness decoupled via `TurnData` DTO; survivors marked with `// SEAM (Pipecat):`; QoE_Shell orphaned components removed (0 missing scripts). Compiles green.
-> - **NOW:** Milestone 2 — port the proven PoC client into iva-cui.
+> **STATUS (updated — M0–M5 all DONE & verified on the study PC):**
+> - **PoC** (separate repo): proved Unity↔Pipecat WebRTC, agent voice, full-duplex interruption, OVR lip sync, voice param.
+> - **iva-cui teardown** (`377b3ec`→`7e64238`): old HTTP pipeline removed, QoE harness decoupled via `TurnData`.
+> - **M2 — DONE** (`606e4f2`,`7244703`,`d04211f` + fixes): `PipecatClient` ported in; task-driven lifecycle (connect-on-briefing, greeting held until Start, mic gated to `conversationGateOpen`, disconnect on run-end); Start gated until connected; lip sync via auto split-tap.
+> - **M4 — DONE** (`03f4fc2`,`7085854`,`f56f52b` + macos `0f92c96`): all 10 agents (t0–t9) with own persona + Kokoro voice via `agent_id` in the offer; backend `agents_config.py` ports the legacy prompts; 10 avatar audio sources wired. **Verified: each agent its own voice + lip sync.**
+> - **M5 — DONE** (folded into M2/M3 hooks): conversation wired into briefing/Start/run-end/timer flow.
+> - **NOW:** Milestone 6 — QoE telemetry re-sourcing from RTVI events (+ Done-button auto-reveal + avatar animation states, which ride the same events).
 
 ### Milestone 0 — ✅ DONE — Backend reachable (zero code, do first)
 Start the Mac bot `uv run bot.py --host 0.0.0.0`. From the **Windows study PC**, open the demo's
@@ -183,30 +186,35 @@ without touching the media core. (Don't build the OpenAI adapter now — just do
 single observable that confirms ICE + DTLS + Opus both-ways + data channel + RTVI handshake all work
 together against the real backend. Empty project keeps it fast and removes iva-cui as a variable.
 
-### Milestone 2 — ◀ NOW — Bring it into iva-cui + avatar audio
-Port the proven PoC client (`PipecatPoC.cs`) into the iva-cui project as the `IAgentTransport`-shaped
-seam. Plug into `AgentSelectionController.PlayAudioForAgent(... TurnData ...)` / route inbound audio to
-the active `ActivationZone.audioSource` (spatialized), and respect `conversationGateOpen` +
-`QoeTurnLog.CurrentEpoch`. Lip sync (the OVR split-tap, proven in the PoC) attaches at the same
-AudioSource. **Single-agent first** (one bot/port), prove a talking lip-synced avatar inside iva-cui,
-then Milestone 4 generalizes to the roster.
+### Milestone 2 — ✅ DONE — In iva-cui + avatar audio + study lifecycle
+`PipecatClient` connects per encounter at briefing (audio routed to that task's avatar AudioSource),
+greeting held until Start, mic gated to `conversationGateOpen`, disconnect on run-end. Lip sync via
+auto split-tap (finds the agent's `OVRLipSyncContext`, `skipAudioSource=true`, fed from `onReceived`).
 
 ### Milestone 3 — ✅ DONE (in PoC) — OVR Lip Sync
 Split-tap: `AudioStreamTrack.onReceived += (pcm,ch,sr) => ctx.ProcessAudioSamplesRaw(pcm.Clone(),ch)`
 into `OVRLipSyncContext(skipAudioSource=true)`. Proven in the PoC (visible mouth tracks the agent
 voice). In iva-cui it attaches to the existing per-zone avatar OVR context; folded into Milestone 2.
 
-### Milestone 4 — Multi-agent roster
-Per-agent voice + persona via per-encounter reconnect. Simplest: one bot process per agent on its own
-port (7860/7861/7862), each with its own system prompt + voice; Unity points each zone at its port.
-Fresh connect (`pc_id:null`) per agent. No bot.py change required.
+### Milestone 4 — ✅ DONE — Multi-agent roster
+Per-encounter connect; each agent (t0–t9) sends `agent_id` in the offer → bot serves that persona +
+default Kokoro voice (`agents_config.py` ports the legacy `transition_prompts_*` prompts; one bot
+process, single backend edit). `kTaskAgentIds` maps task index→agent_id; 10 avatar audio sources wired.
 
-### Milestone 5 — qoe-lab control states + study harness re-integration
-Wire the conversation into the existing study flow (briefing/Start gate, run states, Done, etc.).
+### Milestone 5 — ✅ DONE — Study-flow integration
+Folded into M2's hooks: briefing→connect, Start→greeting+gate-open, timer/Done/operator→disconnect.
 
-### Milestone 6 — QoE logging (DECIDE LATER)
-Decide how to log QoE for the streaming/full-duplex model. Not designed yet. Old harness untouched
-until then.
+### Milestone 6 — ◀ NOW — QoE telemetry re-sourcing from RTVI events
+Re-source the deferred study instrumentation from the RTVI data-channel events `PipecatClient` already
+receives (`OnDcMessage`). Three things ride the same events:
+1. **Latency telemetry** — repoint `SceneProfiling`/`QoeTurnLog.RecordTurn` (currently fed by the dead
+   HTTP stages) to RTVI: `speakStart`←user-started-speaking, `speakEnd`←user-stopped-speaking,
+   TTFA←first `bot-started-speaking`/audio delta, response-end←`bot-stopped-speaking`; transcripts←
+   `user-transcription`/`bot-tts-text`; per-stage latency←`metrics` (ttfb/processing). Fill `TurnData`.
+2. **Done-button auto-reveal** — detect the agent wrap-up (`<END>` in bot text, or an end signal) →
+   `NotifyConversationOver()`. Currently dormant (timer backstops).
+3. **Avatar animation states** — drive listening/thinking/talking off `user-/bot-started/stopped-
+   speaking` (the old mic pipeline used to set these; cosmetic).
 
 ### Who does what
 - **Code (`.cs`/backend `.py` config)** — assistant.

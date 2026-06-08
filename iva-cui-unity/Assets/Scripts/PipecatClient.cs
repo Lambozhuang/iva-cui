@@ -293,9 +293,15 @@ public class PipecatClient : MonoBehaviour
 
     private void OnDcMessage(byte[] bytes)
     {
-        // SEAM (Pipecat): RTVI events (transcripts, bot-started/stopped-speaking,
-        // metrics) arrive here. Logged for now; QoE re-sourcing is Milestone 6.
-        Debug.Log("[Pipecat] DC <- " + Encoding.UTF8.GetString(bytes));
+        string json = Encoding.UTF8.GetString(bytes);
+        Debug.Log("[Pipecat] DC <- " + json);
+
+        // Capture the raw RTVI event stream verbatim into the run telemetry (no
+        // client-side parsing — qoe-lab stores the envelope whole; turn definition +
+        // latency analysis happen offline from this server-authoritative record).
+        // OnMessage fires on the Unity main thread, so this is safe. No-op between
+        // runs (the briefing greeting is before BeginRun, correctly not captured).
+        QoeDevice.QoeTurnLog.RecordRawEvent(json);
     }
 
     private void Update()

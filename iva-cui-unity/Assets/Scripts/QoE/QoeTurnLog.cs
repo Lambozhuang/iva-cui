@@ -86,12 +86,23 @@ namespace QoeDevice {
             [JsonProperty("agent_reply")]     public string agentReply;      // SpeechResponse.message
         }
 
+        // One raw RTVI data-channel message, captured verbatim. We store the whole
+        // JSON string untouched (the operator/qoe-lab stores the envelope as an opaque
+        // blob, so no client-side parsing of the metrics is needed) plus the device
+        // Time.time at receipt so events can be ordered/aligned to the run clock in
+        // offline analysis. This is the server-authoritative record of everything that
+        // happened in the conversation (speaking events, transcripts, metrics, etc.).
+        public class RawEvent {
+            [JsonProperty("t")]   public float  t;     // Time.time at receipt (maps to device_clock)
+            [JsonProperty("msg")] public string msg;   // verbatim RTVI JSON message
+        }
+
         public class Envelope {
             // sid + condition_run_id are REQUIRED by the server, which strips them and
             // stores the rest of this object verbatim as an opaque JSON blob.
             [JsonProperty("sid")]                    public string      sid;            // null for debug runs (never POSTed)
             [JsonProperty("condition_run_id")]       public int         conditionRunId;
-            [JsonProperty("schema_version")]         public int         schemaVersion = 1;
+            [JsonProperty("schema_version")]         public int         schemaVersion = 2;
             [JsonProperty("task_number")]            public int?        taskNumber;     // null for training (mirrors start_task)
             [JsonProperty("task_index")]             public int         taskIndex;      // 0=Training, 1..9 zone
             [JsonProperty("label")]                  public string      label;
@@ -107,6 +118,12 @@ namespace QoeDevice {
             // The turn-records. Named "samples" so the server's `/telemetry` log line
             // (`samples=<n>`) reports the turn count, matching the XR simulator's body.
             [JsonProperty("samples")]                public List<TurnRecord> samples = new();
+
+            // Raw, unparsed RTVI event stream for the run (Pipecat data-channel
+            // messages: speaking events, transcripts, per-stage metrics). Stored whole
+            // so turn-definition + latency analysis can be done offline from the
+            // server-authoritative record, independent of the per-turn `samples` above.
+            [JsonProperty("rtvi_events")]            public List<RawEvent> rtviEvents = new();
         }
 
         // ---- collector state ----
@@ -226,6 +243,15 @@ namespace QoeDevice {
             };
             current.samples.Add(rec);
             QoeLog.Event("telemetry", $"turn {rec.turnIndex} recorded ({pipeline}, {rec.agentType}): response in {rec.dTotalResponse:0.00}s");
+        }
+
+        // Append one raw RTVI data-channel message to the active run, verbatim. Called
+        // from PipecatClient.OnDcMessage for every inbound message. No-op between runs
+        // (so the per-encounter greeting that plays during briefing — before BeginRun —
+        // is not captured, which is correct: it's not part of the measured run).
+        public static void RecordRawEvent(string json) {
+            if (current == null) return;
+            current.rtviEvents.Add(new RawEvent { t = Time.time, msg = json });
         }
 
         // Finalize the run: stamp end reason + end time, write the envelope to a JSON

@@ -172,6 +172,7 @@ namespace QoeDevice {
         static readonly string[] kTaskBriefings = {
             // 0 Training
             "This is a practice conversation with Alfred, a friendly assistant. It's a chance to warm up and get a feel for the range of connection quality you'll experience across the study.\n\n" +
+            "Throughout the study, try to focus on how the conversation itself feels to have, rather than the place you're in or what you happen to talk about.\n\n" +
             "To talk, just speak naturally out loud after pressing Start, and you can interrupt the agent at any time.\n\n" +
             "There's a countdown for each conversation, but it's only an upper limit. When you feel finished, just say goodbye and a Done button will appear to continue.\n\n" +
             "When you're ready, press Start, then say hello to Alfred.",

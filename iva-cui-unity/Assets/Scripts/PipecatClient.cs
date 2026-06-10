@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Text;
+using System.Text.RegularExpressions;
 using Unity.WebRTC;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -31,6 +32,23 @@ public class PipecatClient : MonoBehaviour
     [Header("Microphone")]
     [Tooltip("Capture device. Don't pick a virtual/loopback device — it echoes.")]
     public string micDeviceName = "";
+
+    [Header("Harsh-network robustness")]
+    [Tooltip("Auto re-establish the media path (ICE restart) if the peer connection drops " +
+             "to Disconnected/Failed under high loss/RTT, instead of leaving the session dead. " +
+             "Reuses the existing bot session + conversation context via restart_pc.")]
+    public bool autoReconnect = true;
+    [Tooltip("Seconds the connection must stay Disconnected before we trigger an ICE restart. " +
+             "Brief blips often self-heal; this avoids thrashing on transient drops.")]
+    public float reconnectAfterSeconds = 2.0f;
+    [Tooltip("Minimum seconds between ICE-restart attempts, so a persistently bad path " +
+             "doesn't get hammered with renegotiations.")]
+    public float reconnectCooldownSeconds = 5.0f;
+    [Tooltip("Munge the Opus fmtp line in the SDP offer to request in-band FEC (useinbandfec=1). " +
+             "Lets the encoder add redundant frame copies so the server can recover lost mic " +
+             "audio before it reaches the VAD. EXPERIMENTAL: only takes effect if the libwebrtc " +
+             "build honors it; verify on the Mac that VAD start-of-speech improves under loss.")]
+    public bool requestOpusFec = true;
 
     // Live mic input level (0..1), smoothed, sampled from the capture clip each
     // frame while the mic track is hot. Exposed for the HUD level meter so the
@@ -86,6 +104,12 @@ public class PipecatClient : MonoBehaviour
     private bool greetReleased;        // OpenConversation() called -> ok to send client-ready
     private bool clientReadySent;
     private bool tearingDown;
+
+    private string pcId = "";          // server-assigned id; reused to renegotiate (ICE restart)
+    private RTCPeerConnectionState connState = RTCPeerConnectionState.New;
+    private float disconnectedFor;     // seconds the connection has been Disconnected/Failed
+    private float reconnectCooldown;   // seconds remaining before another ICE restart is allowed
+    private bool reconnecting;         // an ICE-restart renegotiation is in flight
 
     [Serializable] private class OfferBody { public string sdp; public string type; public string pc_id; public bool restart_pc; public string voice; public string agent_id; }
     [Serializable] private class AnswerBody { public string pc_id; public string sdp; public string type; }
@@ -161,6 +185,8 @@ public class PipecatClient : MonoBehaviour
         remoteTrack = null; agentSink = null; agentLipSync = null;
         dcReady = greetReleased = clientReadySent = IsConnected = HasAgentSpoken = false;
         tearingDown = false;
+        pcId = ""; connState = RTCPeerConnectionState.New;
+        disconnectedFor = reconnectCooldown = 0f; reconnecting = false;
         MicLevel = 0f;
         Debug.Log("[Pipecat] disconnected");
     }
@@ -214,7 +240,17 @@ public class PipecatClient : MonoBehaviour
         pc = new RTCPeerConnection(ref config);
 
         pc.OnIceConnectionChange = s => Debug.Log($"[Pipecat] ICE connection: {s}");
-        pc.OnConnectionStateChange = s => Debug.Log($"[Pipecat] Peer connection: {s}");
+        pc.OnConnectionStateChange = s =>
+        {
+            Debug.Log($"[Pipecat] Peer connection: {s}");
+            connState = s;
+            // A fresh connect/restart that reaches Connected clears the recovery timers.
+            if (s == RTCPeerConnectionState.Connected)
+            {
+                disconnectedFor = 0f;
+                reconnecting = false;
+            }
+        };
         pc.OnTrack = e =>
         {
             if (e.Track is AudioStreamTrack at)
@@ -236,23 +272,36 @@ public class PipecatClient : MonoBehaviour
         dc.OnMessage = OnDcMessage;
         dc.OnClose = () => Debug.Log("[Pipecat] data channel closed");
 
-        var offerOp = pc.CreateOffer();
+        yield return StartCoroutine(NegotiateRoutine(iceRestart: false));
+    }
+
+    // Create an offer, (optionally) munge it for Opus FEC, post it to /api/offer,
+    // and apply the answer. Shared by the initial connect and by ICE-restart
+    // recovery. When iceRestart is true we keep the same RTCPeerConnection and ask
+    // the server to renegotiate the existing session (restart_pc + the stored
+    // pc_id), so the bot + conversation context survive a network drop.
+    private IEnumerator NegotiateRoutine(bool iceRestart)
+    {
+        var offerOptions = new RTCOfferAnswerOptions { iceRestart = iceRestart };
+        var offerOp = pc.CreateOffer(ref offerOptions);
         yield return offerOp;
-        if (offerOp.IsError) { Debug.LogError("[Pipecat] CreateOffer: " + offerOp.Error.message); yield break; }
+        if (offerOp.IsError) { Debug.LogError("[Pipecat] CreateOffer: " + offerOp.Error.message); reconnecting = false; yield break; }
 
         var desc = offerOp.Desc;
+        if (requestOpusFec) desc.sdp = MungeOpusFec(desc.sdp);
         var slOp = pc.SetLocalDescription(ref desc);
         yield return slOp;
-        if (slOp.IsError) { Debug.LogError("[Pipecat] SetLocalDescription: " + slOp.Error.message); yield break; }
+        if (slOp.IsError) { Debug.LogError("[Pipecat] SetLocalDescription: " + slOp.Error.message); reconnecting = false; yield break; }
 
         // aiortc is non-trickle: gather all ICE candidates BEFORE posting the offer.
         float gt = 0f;
         while (pc.GatheringState != RTCIceGatheringState.Complete && gt < 5f) { gt += Time.deltaTime; yield return null; }
-        Debug.Log($"[Pipecat] ICE gathering: {pc.GatheringState} ({gt:F1}s)");
+        Debug.Log($"[Pipecat] ICE gathering: {pc.GatheringState} ({gt:F1}s){(iceRestart ? " [ICE restart]" : "")}");
 
         // voice only when overriding for tests; empty = use the agent's default voice.
-        var body = new OfferBody { sdp = pc.LocalDescription.sdp, type = "offer", pc_id = "", restart_pc = false,
-                                   voice = overrideVoice ? voice.ToString() : "", agent_id = agentId };
+        // On reconnect, reuse pc_id + restart_pc so the server renegotiates in place.
+        var body = new OfferBody { sdp = pc.LocalDescription.sdp, type = "offer", pc_id = iceRestart ? pcId : "",
+                                   restart_pc = iceRestart, voice = overrideVoice ? voice.ToString() : "", agent_id = agentId };
         string json = JsonUtility.ToJson(body);
 
         using (var req = new UnityWebRequest(offerUrl, "POST"))
@@ -265,17 +314,44 @@ public class PipecatClient : MonoBehaviour
             if (req.result != UnityWebRequest.Result.Success)
             {
                 Debug.LogError($"[Pipecat] /api/offer failed: {req.error}\n{req.downloadHandler.text}");
+                reconnecting = false;
                 yield break;
             }
 
             var answer = JsonUtility.FromJson<AnswerBody>(req.downloadHandler.text);
+            if (!string.IsNullOrEmpty(answer.pc_id)) pcId = answer.pc_id;
             Debug.Log($"[Pipecat] Got answer (pc_id={answer.pc_id})");
             var answerDesc = new RTCSessionDescription { type = RTCSdpType.Answer, sdp = answer.sdp };
             var srOp = pc.SetRemoteDescription(ref answerDesc);
             yield return srOp;
-            if (srOp.IsError) { Debug.LogError("[Pipecat] SetRemoteDescription: " + srOp.Error.message); yield break; }
-            Debug.Log("[Pipecat] Remote description set — connecting media...");
+            if (srOp.IsError) { Debug.LogError("[Pipecat] SetRemoteDescription: " + srOp.Error.message); reconnecting = false; yield break; }
+            Debug.Log($"[Pipecat] Remote description set — {(iceRestart ? "media path restarting..." : "connecting media...")}");
         }
+    }
+
+    // Add useinbandfec=1 (and a packet-loss hint) to the Opus fmtp line so the
+    // encoder emits FEC-protected frames the server can use to reconstruct lost
+    // mic audio before it reaches the VAD. We find Opus's payload type from its
+    // rtpmap, then patch (or append) its fmtp line. No-op if no Opus line is found.
+    // EXPERIMENTAL — only effective if the underlying libwebrtc honors the SDP.
+    private static string MungeOpusFec(string sdp)
+    {
+        var rtpmap = Regex.Match(sdp, @"a=rtpmap:(\d+)\s+opus/48000", RegexOptions.IgnoreCase);
+        if (!rtpmap.Success) return sdp;
+        string pt = rtpmap.Groups[1].Value;
+
+        var fmtp = Regex.Match(sdp, @"a=fmtp:" + pt + @"\s+([^\r\n]*)");
+        if (fmtp.Success)
+        {
+            string parms = fmtp.Groups[1].Value;
+            if (parms.Contains("useinbandfec")) return sdp; // already present
+            string patched = "a=fmtp:" + pt + " " + parms + ";useinbandfec=1";
+            return sdp.Substring(0, fmtp.Index) + patched + sdp.Substring(fmtp.Index + fmtp.Length);
+        }
+        // No fmtp line for Opus — insert one right after its rtpmap line.
+        int eol = sdp.IndexOf('\n', rtpmap.Index);
+        if (eol < 0) return sdp;
+        return sdp.Substring(0, eol + 1) + "a=fmtp:" + pt + " useinbandfec=1\r\n" + sdp.Substring(eol + 1);
     }
 
     // Play the agent voice through the agent avatar's AudioSource so its existing
@@ -417,6 +493,7 @@ public class PipecatClient : MonoBehaviour
             micTrack.Enabled = micShouldBeHot;
 
         SampleMicLevel(micShouldBeHot);
+        ServiceReconnect();
     }
 
     // Sample the live capture level so the HUD can show the participant their voice
@@ -445,6 +522,29 @@ public class PipecatClient : MonoBehaviour
         MicLevel = peak > MicLevel
             ? Mathf.Lerp(MicLevel, peak, 0.6f)
             : Mathf.MoveTowards(MicLevel, peak, Time.deltaTime * 1.5f);
+    }
+
+    // Watchdog: if the peer connection sits in Disconnected/Failed past the grace
+    // window, trigger an in-place ICE restart (renegotiate the existing session)
+    // rather than leaving the conversation dead. Rate-limited by a cooldown so a
+    // persistently bad path isn't hammered. The bot session + context are preserved.
+    private void ServiceReconnect()
+    {
+        if (reconnectCooldown > 0f) reconnectCooldown -= Time.deltaTime;
+        if (!autoReconnect || tearingDown || pc == null || reconnecting) return;
+
+        bool down = connState == RTCPeerConnectionState.Disconnected
+                 || connState == RTCPeerConnectionState.Failed;
+        if (!down) { disconnectedFor = 0f; return; }
+
+        disconnectedFor += Time.deltaTime;
+        if (disconnectedFor < reconnectAfterSeconds || reconnectCooldown > 0f) return;
+
+        Debug.LogWarning($"[Pipecat] connection {connState} for {disconnectedFor:F1}s — attempting ICE restart");
+        reconnecting = true;
+        disconnectedFor = 0f;
+        reconnectCooldown = reconnectCooldownSeconds;
+        StartCoroutine(NegotiateRoutine(iceRestart: true));
     }
 
     private void OnDestroy()

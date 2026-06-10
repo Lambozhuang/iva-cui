@@ -278,6 +278,10 @@ namespace QoeDevice {
 
         TMP_Text logText;
         TMP_Text timerText;
+        // Mic level meter (top-left cluster): a fixed track with a fill that scales
+        // with PipecatClient.MicLevel, so the participant can see Unity is hearing them.
+        Image micMeterFill;
+        RectTransform micMeterFillRT;
         TMP_Text briefingText;
         GameObject briefingGo;
         TMP_Text pointsText;
@@ -467,6 +471,7 @@ namespace QoeDevice {
             }
             topLeftGo = controlsGo = taskGridGo = logPanelGo = connStatusGo = errorGo = briefingGo = pointsGo = detailsHeaderGo = welcomeGo = null;
             timerText = null; centerRegion = null; briefingText = null; pointsText = null; detailsText = null; welcomeText = null;
+            micMeterFill = null; micMeterFillRT = null;
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
@@ -480,13 +485,48 @@ namespace QoeDevice {
             hg.childControlWidth = true; hg.childControlHeight = true;
             hg.childAlignment = TextAnchor.MiddleLeft;
 
-            // Mic indicator removed: under open-mic full-duplex WebRTC the client no
-            // longer tracks a per-turn recording state, so the dot/label were a dead
-            // always-idle stub. Just the run timer remains in the top-left region.
             timerText = ui.BuildLabel(region, "0:00", 22, FontStyles.Bold, Color.white, TextAlignmentOptions.Left);
             timerText.enableWordWrapping = false;
             var tle = timerText.gameObject.AddComponent<LayoutElement>();
-            tle.flexibleWidth = 1f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
+            tle.flexibleWidth = 0f; tle.minHeight = ui.Sx(28); tle.preferredHeight = ui.Sx(28);
+
+            // Live mic level meter: a small label + a horizontal track whose fill
+            // grows with the participant's voice level (PipecatClient.MicLevel),
+            // updated each frame in Update(). Gives the subject confidence the Unity
+            // frontend is actually hearing them, so silence reads as "speak up", not
+            // "is this thing on?". Only visible while a task runs (the whole cluster
+            // is gated on `running`), which is exactly when the mic is hot.
+            ui.BuildLabel(region, "MIC", 12, FontStyles.Bold, new Color(0.7f, 0.74f, 0.8f), TextAlignmentOptions.Left)
+              .gameObject.AddComponent<LayoutElement>().flexibleWidth = 0f;
+
+            var trackGo = new GameObject("MicMeter", typeof(RectTransform), typeof(Image));
+            trackGo.transform.SetParent(region, false);
+            trackGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
+            var trackLe = trackGo.AddComponent<LayoutElement>();
+            trackLe.minWidth = ui.Sx(90); trackLe.preferredWidth = ui.Sx(90); trackLe.flexibleWidth = 1f;
+            trackLe.minHeight = ui.Sx(14); trackLe.preferredHeight = ui.Sx(14);
+
+            var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+            fillGo.transform.SetParent(trackGo.transform, false);
+            micMeterFill = fillGo.GetComponent<Image>();
+            micMeterFill.color = new Color(0.36f, 0.78f, 0.4f); // green
+            micMeterFillRT = (RectTransform)fillGo.transform;
+            // Anchored left, fills vertically; width driven by anchorMax.x = level.
+            micMeterFillRT.anchorMin = new Vector2(0f, 0f);
+            micMeterFillRT.anchorMax = new Vector2(0f, 1f);
+            micMeterFillRT.pivot = new Vector2(0f, 0.5f);
+            micMeterFillRT.offsetMin = Vector2.zero; micMeterFillRT.offsetMax = Vector2.zero;
+        }
+
+        // Map the smoothed mic level (peak amplitude, ~0..0.3 for normal speech) to a
+        // 0..1 bar width with a little gain so ordinary talking fills most of the
+        // track, and tint it red→green so a barely-moving bar reads as "louder".
+        void UpdateMicMeter() {
+            if (micMeterFillRT == null) return;
+            float level = pipecat != null ? pipecat.MicLevel : 0f;
+            float norm = Mathf.Clamp01(level * 3.2f);
+            micMeterFillRT.anchorMax = new Vector2(norm, 1f);
+            micMeterFill.color = Color.Lerp(new Color(0.8f, 0.5f, 0.25f), new Color(0.36f, 0.78f, 0.4f), Mathf.Clamp01(norm * 1.5f));
         }
 
         // Top-right: gray Connected/Connecting…/Disconnected, identical in both modes.
@@ -852,6 +892,9 @@ namespace QoeDevice {
                 lastPipecatConnected = pipecat.HasAgentSpoken;
                 UpdateButtonStates();
             }
+
+            // Drive the mic level meter while its cluster is visible (task running).
+            if (topLeftGo != null && topLeftGo.activeInHierarchy) UpdateMicMeter();
         }
 
         async void OnDestroy() {

@@ -32,6 +32,11 @@ public class PipecatClient : MonoBehaviour
     [Tooltip("Capture device. Don't pick a virtual/loopback device — it echoes.")]
     public string micDeviceName = "";
 
+    // Live mic input level (0..1), smoothed, sampled from the capture clip each
+    // frame while the mic track is hot. Exposed for the HUD level meter so the
+    // participant can see the Unity frontend is hearing them. 0 when muted.
+    public float MicLevel { get; private set; }
+
     public enum KokoroVoice
     {
         af_heart, af_bella, af_nicole, af_aoede, af_kore, af_sarah,
@@ -156,6 +161,7 @@ public class PipecatClient : MonoBehaviour
         remoteTrack = null; agentSink = null; agentLipSync = null;
         dcReady = greetReleased = clientReadySent = IsConnected = HasAgentSpoken = false;
         tearingDown = false;
+        MicLevel = 0f;
         Debug.Log("[Pipecat] disconnected");
     }
 
@@ -409,6 +415,36 @@ public class PipecatClient : MonoBehaviour
         bool micShouldBeHot = StudyControls.conversationGateOpen;
         if (micTrack != null && micTrack.Enabled != micShouldBeHot)
             micTrack.Enabled = micShouldBeHot;
+
+        SampleMicLevel(micShouldBeHot);
+    }
+
+    // Sample the live capture level so the HUD can show the participant their voice
+    // is being picked up. Reads a window of the looping mic clip at the current
+    // record head and tracks peak amplitude, with asymmetric smoothing (fast attack,
+    // slow release) so the meter is responsive but not jittery. Zero when the mic is
+    // muted (gate closed) so the meter reads dead, matching what's transmitted.
+    private float[] _micSampleBuf = new float[256];
+    private void SampleMicLevel(bool hot)
+    {
+        if (!hot || micClip == null || string.IsNullOrEmpty(micDevice))
+        {
+            MicLevel = Mathf.MoveTowards(MicLevel, 0f, Time.deltaTime * 4f);
+            return;
+        }
+        int pos = Microphone.GetPosition(micDevice) - _micSampleBuf.Length;
+        if (pos < 0) { return; }
+        micClip.GetData(_micSampleBuf, pos);
+        float peak = 0f;
+        for (int i = 0; i < _micSampleBuf.Length; i++)
+        {
+            float a = _micSampleBuf[i]; if (a < 0f) a = -a;
+            if (a > peak) peak = a;
+        }
+        // Attack quickly toward a rising level, release slowly so it doesn't flicker.
+        MicLevel = peak > MicLevel
+            ? Mathf.Lerp(MicLevel, peak, 0.6f)
+            : Mathf.MoveTowards(MicLevel, peak, Time.deltaTime * 1.5f);
     }
 
     private void OnDestroy()

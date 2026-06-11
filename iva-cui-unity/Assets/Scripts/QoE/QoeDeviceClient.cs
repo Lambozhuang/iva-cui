@@ -171,69 +171,70 @@ namespace QoeDevice {
         // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
         static readonly string[] kTaskBriefings = {
             // 0 Training
-            "This is a practice conversation with Alfred, a friendly assistant. It's a chance to warm up and get a feel for the range of connection quality you'll experience across the study.\n\n" +
-            "Throughout the study, try to focus on how the conversation itself feels to have, rather than the place you're in or what you happen to talk about.\n\n" +
+            "This is a practice conversation with Alfred, a friendly assistant. You'll practice the task format used in the whole study: each conversation gives you a few things to find out from the agent. Ask in your own words, in any order.\n\n" +
+            "Throughout the study, focus on how the conversation itself feels, not the place you're in or the topic.\n\n" +
             "To talk, just speak naturally out loud after pressing Start, and you can interrupt the agent at any time.\n\n" +
-            "There's a countdown for each conversation, but it's only an upper limit. When you feel finished, just say goodbye and a Done button will appear to continue.\n\n" +
+            "When you have everything, say goodbye — then press Done.\n\n" +
             "When you're ready, press Start, then say hello to Alfred.",
             // 1–3 City (Shirts)
-            "You're at your friend Sage's place, just hanging out. Catch up with them and chat about whatever comes to mind.",
-            "You're in a clothing store, talking to Niko, the shop clerk. Strike up a conversation — ask about the store or whatever you're curious about.",
-            "You're at the back of a clothing store, talking to the store manager. Have a conversation about the store or anything you like.",
+            "You're at your friend Sage's place, catching up.",
+            "You're in a clothing store talking to Niko, the clerk. You're returning a shirt and also want some information.",
+            "You're at the back of the store with the manager, following up on your return.",
             // 4–6 Hotel
-            "You're at the front desk of Hotel 333, talking to Hazel, the receptionist. Chat with them about your stay, the hotel, or the area.",
-            "You're on the hotel floor, talking to Justin, a maintenance worker on a break. Make conversation about the hotel or his work.",
-            "You're at the hotel's restaurant, talking to Luka, the waiter. Chat about the food, the restaurant, or whatever you'd like.",
+            "You're checking in at the front desk of Hotel 333 with Hazel.",
+            "You run into Justin, a maintenance worker, on your hotel floor. You have an issue to report and a few questions.",
+            "You're at the hotel restaurant talking to Luka, the waiter.",
             // 7–9 Museum
-            "You're at the entrance of the Millennium Museum, talking to Emma, the receptionist. Ask about visiting the museum or just make conversation.",
-            "You're at the Cyrus cylinder exhibit, talking to Aleksander, a volunteer. Chat with him about the exhibit or whatever interests you.",
-            "You're at the civil rights exhibit, talking to Tammy, a volunteer. Have a conversation about the exhibit or anything you're curious about.",
+            "You're at the entrance of the Millennium Museum, planning your visit with Emma.",
+            "You're at the Cyrus cylinder exhibit with Aleksander, the volunteer Emma mentioned.",
+            "You're at the civil rights exhibit with Tammy, the volunteer.",
         };
 
-        // Suggested talking-points per task — shown in the briefing AND kept on
-        // the HUD during the run as a small reminder list, so a subject who runs
-        // out of things to say has prompts to fall back on. These are NOT tracked
-        // or required (no checkmarks, no completion); they're conversational
-        // scaffolding only, repurposed from the original quest goals into pure
-        // "things to talk about". One string per task; lines are split on '|'.
-        static readonly string[] kTaskTalkingPoints = {
+        // Information slots the subject must find out from the agent this task —
+        // shown in the briefing AND kept on the HUD during the run so they stay
+        // visible while talking. Terse keyword/blank labels (not full questions) so
+        // the subject phrases the utterance themselves. Every slot's answer is in
+        // the agent's server-side FACTS block (agents_config.py), so the values are
+        // consistent across participants. One string per task; slots split on '|'.
+        static readonly string[] kTaskFindOuts = {
             // 0 Training
-            "How Alfred is doing|What this place is|What to expect in the study",
+            "His favourite season: ____|Years he has worked here: ____",
             // 1–3 City (Shirts)
-            "How they've been lately|Tell them something going on with you|Make plans to hang out",
-            "What the store sells|Returning or exchanging an item|Ask for a recommendation",
-            "How they run the store|A return or refund|Ask about the clothing range",
+            "Movie Sage saw last weekend: ____|Café Sage wants to try: ____|Day Sage is free to hang out: ____|Price Sage paid for their concert ticket: ____",
+            "Today's closing time: ____|Price of the plain white T-shirt: ____|Days allowed for returns: ____|Floor of the fitting rooms: ____",
+            "Days until the refund arrives: ____|Sunday opening time: ____|Member discount: ____ %|Name of the membership program: ____",
             // 4–6 Hotel
-            "Checking in / your room|Things to do nearby|The hotel's restaurant",
-            "What they're working on|How the hotel is run|Anything that needs fixing",
-            "Today's specials|Food you like or avoid|Recommendations",
+            "Breakfast start time: ____|Wi-Fi network name: ____|Checkout time: ____|Floor of the gym: ____",
+            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Number to call for room issues: ____",
+            "Today's special: ____|Its price: ____|Dessert he recommends: ____|Kitchen closing time: ____",
             // 7–9 Museum
-            "Visiting the museum today|What's on display|Student admission",
-            "What the Cyrus cylinder is|Why it matters|Who Cyrus was",
-            "The civil rights movement|Martin Luther King|The Montgomery Bus Boycott",
+            "Today's closing time: ____|Student ticket price: ____|Hall of the Cyrus cylinder: ____|Name of the volunteer at that exhibit: ____",
+            "Material of the cylinder: ____|Year it dates from: ____|City it was found in: ____|Length of the audio guide: ____",
+            "Time of today's guided talk: ____|Name of the photo collection on display: ____|Hall where the speech recording plays: ____|Year this exhibit opened: ____",
         };
 
         // Concrete details the subject "has" for this conversation — e.g. a
         // reservation number the receptionist may ask for. Arming the subject this
         // way means it's fine for an agent to ask in character (gives the subject
         // something real to say) without ever hanging them: they can just read it
-        // off. Shown in the briefing AND kept in the runtime panel. Empty string =
-        // no details for that task (most are pure free chat). Lines split on '|'.
+        // off — it's the "something to give" half of the two-way task, balancing
+        // the find-out slots. Shown in the briefing AND kept in the runtime panel.
+        // Empty string = no details for that task (only Training). Lines split on '|'.
         static readonly string[] kTaskDetails = {
             // 0 Training
             "",
             // 1–3 City (Shirts)
-            "",
+            "You just started a new job at \"Northlight Studio\"|You're free on Saturday",
             "Return confirmation code: 1 1 1 1|Item: a red shirt",
             "Return confirmation code: 1 1 1 1|Item: a red shirt",
             // 4–6 Hotel
-            "Your reservation number: 2 4 6 8|Your name: Alex Taylor",
-            "",
-            "Your room number: 111",
+            "Reservation number: 2 4 6 8|Your name: Alex Taylor",
+            "Your room: 111|The air conditioner in your room rattles",
+            "Charge it to room 111|You're allergic to peanuts",
             // 7–9 Museum
-            "You're visiting as a student",
-            "",
-            "",
+            "You're a student|Booking reference: 4 7 2 5",
+            "Emma at reception sent you here",
+            "You heard about the exhibit from Emma at the entrance",
         };
 
         string BriefingFor(int taskIndex) {
@@ -244,14 +245,14 @@ namespace QoeDevice {
             string details = DetailsBlock(taskIndex);
             if (!string.IsNullOrEmpty(details))
                 sb.Append("\n\nYour details (use these if asked):\n").Append(details);
-            string points = TalkingPointsBlock(taskIndex);
+            string points = FindOutsBlock(taskIndex);
             if (!string.IsNullOrEmpty(points))
-                sb.Append("\n\nYou could talk about:\n").Append(points);
+                sb.Append("\n\nFind out:\n").Append(points);
             return sb.ToString();
         }
 
-        // The talking-points formatted as a bulleted block. Empty string if none.
-        string TalkingPointsBlock(int taskIndex) => BulletBlock(kTaskTalkingPoints, taskIndex);
+        // The find-out slots formatted as a bulleted block. Empty string if none.
+        string FindOutsBlock(int taskIndex) => BulletBlock(kTaskFindOuts, taskIndex);
 
         // The subject's concrete details as a bulleted block. Empty string if none.
         string DetailsBlock(int taskIndex) => BulletBlock(kTaskDetails, taskIndex);
@@ -295,6 +296,18 @@ namespace QoeDevice {
         // The Done button stays hidden until this flips, so it isn't offered from
         // the start of the run. Reset at the start of each run.
         bool conversationWrappedUp;
+        // True once the run has been going for kDoneFallbackS, regardless of whether
+        // the agent reached its farewell. Gives the subject an off-ramp on tasks
+        // where the conversation never naturally closes, without waiting out the
+        // operator's full max-duration backstop. Reset at the start of each run.
+        bool doneFallbackReached;
+        // The Done button becomes available either way: the agent wrapped up, or the
+        // fixed fallback delay has elapsed.
+        bool DoneButtonAvailable => conversationWrappedUp || doneFallbackReached;
+        // Seconds from Start before the Done button appears unconditionally. This is
+        // the subject's own off-ramp and is independent of the operator's
+        // max_condition_duration_s (which remains the hard upper bound on the run).
+        const float kDoneFallbackS = 60f;
         TMP_Text connStatusText;
         TMP_Text errorText;
         GameObject topLeftGo;
@@ -394,10 +407,11 @@ namespace QoeDevice {
             // Briefing too, so manual testing shows it exactly like a real run.
             if (briefingGo != null) briefingGo.SetActive(briefing);
 
-            // Talking-points panel — during the whole run. The Done button inside
-            // it stays hidden until the agent wraps up (conversationWrappedUp).
+            // Find-out slots panel — during the whole run. The Done button inside
+            // it stays hidden until the agent wraps up OR the fixed fallback delay
+            // elapses (DoneButtonAvailable).
             if (pointsGo != null) pointsGo.SetActive(running);
-            SetActive(doneButton, running && conversationWrappedUp);
+            SetActive(doneButton, running && DoneButtonAvailable);
 
             // Mic indicator + timer cluster — shown while a task is running. The
             // debug Task buttons enter RunningTask too (DebugStartTask), so this
@@ -636,8 +650,8 @@ namespace QoeDevice {
         // gate and begins the timer — see OnStartPressed. Built separately from
         // the rating client's center region so neither clobbers the other.
         void BuildBriefingPanel(RectTransform parent) {
-            // Near-full-canvas so even the long training briefing (timer +
-            // questionnaire explanation + talking-points) has room.
+            // Near-full-canvas so even the long training briefing (format
+            // explanation + find-out slots + details) has room.
             var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.04f, 0.08f), new Vector2(0.96f, 0.94f), ui.Sx(6));
             briefingGo = region.gameObject;
             var bg = region.gameObject.AddComponent<Image>();
@@ -651,7 +665,7 @@ namespace QoeDevice {
             vlg.childAlignment = TextAnchor.UpperCenter;
 
             // Text takes the available space and auto-shrinks to fit rather than
-            // overflowing. Left-aligned so the "• talking point" bullets read as a
+            // overflowing. Left-aligned so the "• find-out slot" bullets read as a
             // list; word-wrap on. Floor of ~10pt keeps it legible in-headset.
             briefingText = ui.BuildLabel(region, "", 17, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             briefingText.enableWordWrapping = true;
@@ -667,7 +681,7 @@ namespace QoeDevice {
             sle.minHeight = sh; sle.preferredHeight = sh; sle.flexibleHeight = 0f;
         }
 
-        // During-run panel: the (untracked) talking-points reminder plus the
+        // During-run panel: the find-out slots reminder plus the
         // subject-facing Done button. Lower-left so it clears the top-left timer/
         // mic cluster and the right-side controls. Visible only while RunningTask.
         // In debug the task grid + log occupy the bottom, so this sits a little
@@ -699,7 +713,7 @@ namespace QoeDevice {
             detailsText.fontSizeMax = ui.Sx(14);
             detailsText.gameObject.AddComponent<LayoutElement>();
 
-            ui.BuildLabel(region, "You could talk about:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
+            ui.BuildLabel(region, "Find out:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
 
             pointsText = ui.BuildLabel(region, "", 14, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             pointsText.enableWordWrapping = true;
@@ -710,10 +724,11 @@ namespace QoeDevice {
             ple.flexibleHeight = 1f;
 
             // Done ends the run and moves the subject to the questionnaire. It is
-            // hidden until the agent wraps up the conversation (the user said
-            // goodbye → NotifyConversationOver), so it isn't offered from the
-            // start; UpdateUiVisibility gates it on conversationWrappedUp. Distinct
-            // from the operator's red End Run button.
+            // hidden until either the agent wraps up the conversation (user said
+            // goodbye → NotifyConversationOver) or the fixed fallback delay elapses
+            // (kDoneFallbackS), so it isn't offered from the start; visibility is
+            // gated on DoneButtonAvailable. Distinct from the operator's red End Run
+            // button.
             doneButton = ui.BuildButton(region, "Done", kGreen, 16, OnDonePressed);
             var dle = doneButton.GetComponent<LayoutElement>();
             int dh = ui.Sx(40);
@@ -829,8 +844,9 @@ namespace QoeDevice {
             StudyControls.conversationGateOpen = true;
             // Pipecat: greeting was already released at briefing; opening the gate here
             // just makes the mic hot (PipecatClient gates micTrack on conversationGateOpen).
-            conversationWrappedUp = false; // Done button hidden until the agent wraps up
-            if (pointsText != null) pointsText.text = TalkingPointsBlock(activeTaskIndex);
+            conversationWrappedUp = false; // Done hidden until the agent wraps up...
+            doneFallbackReached = false;   // ...or the fixed fallback delay elapses
+            if (pointsText != null) pointsText.text = FindOutsBlock(activeTaskIndex);
             // Details section: populate and show only when this task has details.
             string details = DetailsBlock(activeTaskIndex);
             bool hasDetails = !string.IsNullOrEmpty(details);
@@ -1097,6 +1113,15 @@ namespace QoeDevice {
                     SetHud($"Running '{activeLabel}': {remaining}s");
                     lastWhole = remaining;
                 }
+                // Reveal the subject's Done button once the fixed fallback delay has
+                // elapsed, even if the agent never reached its farewell. Independent
+                // of maxDurationS (the operator's hard backstop). Fires once.
+                if (!doneFallbackReached && t >= kDoneFallbackS) {
+                    doneFallbackReached = true;
+                    QoeLog.Event("task", $"Done button revealed by {kDoneFallbackS:0}s fallback for '{activeLabel}'");
+                    UpdateUiVisibility();
+                    UpdateButtonStates();
+                }
                 yield return null;
             }
             // Natural timer expiry. Clear runCo first so FinishRun doesn't try to
@@ -1151,8 +1176,9 @@ namespace QoeDevice {
         }
 
         // Subject-facing Done button: ends the run and moves to the questionnaire.
-        // Only shown after the agent has wrapped up (conversationWrappedUp). The
-        // timer remains the backstop if the conversation never reaches a close.
+        // Shown after the agent wraps up or after the fixed fallback delay
+        // (DoneButtonAvailable). The operator's max-duration timer remains the hard
+        // backstop if the subject never presses it.
         public void OnDonePressed() {
             if (phase != DevicePhase.RunningTask) return;
             FinishRun("subject pressed Done");
@@ -1367,7 +1393,7 @@ namespace QoeDevice {
             // bot-started-speaking) — not merely the socket being up or PCM buffering —
             // so the subject can't Start into dead air. If no pipecat, don't block.
             SetBtn(startButton,       phase == DevicePhase.Briefing && (pipecat == null || pipecat.HasAgentSpoken));
-            SetBtn(doneButton,        phase == DevicePhase.RunningTask && conversationWrappedUp);
+            SetBtn(doneButton,        phase == DevicePhase.RunningTask && DoneButtonAvailable);
             SetBtn(endRunEarlyButton, phase == DevicePhase.RunningTask);
             RefreshConnStatus();
         }

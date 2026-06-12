@@ -750,15 +750,24 @@ namespace QoeDevice {
             sle.minHeight = sh; sle.preferredHeight = sh; sle.flexibleHeight = 0f;
         }
 
-        // During-run panel: the find-out slots reminder plus the
-        // subject-facing Done button. Lower-left so it clears the top-left timer/
-        // mic cluster and the right-side controls. Visible only while RunningTask.
-        // In debug the task grid + log occupy the bottom, so this sits a little
-        // higher and narrower to avoid them.
+        // During-run panel: the find-out slots reminder plus the subject-facing
+        // Done button. Visible only while RunningTask. Two layouts:
+        //  - Debug: a compact left column (the bottom-center is taken by the task
+        //    grid + log there), sitting high/narrow to clear them.
+        //  - Subject build: a wide band across the bottom-CENTER, under the agent,
+        //    so the card reads with an easy downward glance instead of being pinned
+        //    to the far-left edge in peripheral vision (pilot feedback: too far left,
+        //    hard to see). Both layouts set the same fields (pointsGo, pointsText,
+        //    detailsHeaderGo, detailsText, doneButton) so the rest of the client is
+        //    unchanged.
         void BuildPointsPanel(RectTransform parent) {
-            Vector2 min = debugMode ? new Vector2(0f, 0.18f) : new Vector2(0f, 0.0f);
-            Vector2 max = debugMode ? new Vector2(0.34f, 0.82f) : new Vector2(0.34f, 0.82f);
-            var region = ui.BuildAnchoredRegion(parent, "Points", min, max, ui.Sx(6));
+            if (debugMode) BuildPointsPanelColumn(parent);
+            else           BuildPointsPanelBand(parent);
+        }
+
+        // Debug left column (unchanged behaviour).
+        void BuildPointsPanelColumn(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0f, 0.18f), new Vector2(0.34f, 0.82f), ui.Sx(6));
             pointsGo = region.gameObject;
             var bg = region.gameObject.AddComponent<Image>();
             bg.color = new Color(0f, 0f, 0f, 0.4f);
@@ -792,16 +801,75 @@ namespace QoeDevice {
             var ple = pointsText.gameObject.AddComponent<LayoutElement>();
             ple.flexibleHeight = 1f;
 
-            // Done ends the run and moves the subject to the questionnaire. It is
-            // hidden until either the agent wraps up the conversation (user said
-            // goodbye → NotifyConversationOver) or the fixed fallback delay elapses
-            // (kDoneFallbackS), so it isn't offered from the start; visibility is
-            // gated on DoneButtonAvailable. Distinct from the operator's red End Run
-            // button.
             doneButton = ui.BuildButton(region, "Done", kGreen, 16, OnDonePressed);
             var dle = doneButton.GetComponent<LayoutElement>();
             int dh = ui.Sx(40);
             dle.minHeight = dh; dle.preferredHeight = dh; dle.flexibleHeight = 0f;
+        }
+
+        // Subject build: a wide bottom-center band. A two-column row (find-out
+        // slots | your details) over a centered Done button, so it sits squarely in
+        // front of the subject below the agent for an easy downward glance. Larger
+        // text floor/ceiling than the debug column since there's horizontal room.
+        void BuildPointsPanelBand(RectTransform parent) {
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0f), new Vector2(0.85f, 0.26f), ui.Sx(6));
+            pointsGo = region.gameObject;
+            region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
+
+            var outer = region.gameObject.AddComponent<VerticalLayoutGroup>();
+            outer.spacing = ui.Sx(6);
+            outer.padding = new RectOffset(ui.Sx(16), ui.Sx(16), ui.Sx(8), ui.Sx(8));
+            outer.childForceExpandWidth = true; outer.childForceExpandHeight = false;
+            outer.childControlWidth = true; outer.childControlHeight = true;
+            outer.childAlignment = TextAnchor.UpperCenter;
+
+            // Top row: find-out slots (left) beside the subject's details (right).
+            var rowGo = new GameObject("Row", typeof(RectTransform));
+            rowGo.transform.SetParent(region, false);
+            var rowHlg = rowGo.AddComponent<HorizontalLayoutGroup>();
+            rowHlg.spacing = ui.Sx(24);
+            rowHlg.childForceExpandWidth = true; rowHlg.childForceExpandHeight = true;
+            rowHlg.childControlWidth = true; rowHlg.childControlHeight = true;
+            rowHlg.childAlignment = TextAnchor.UpperLeft;
+            rowGo.AddComponent<LayoutElement>().flexibleHeight = 1f;
+
+            // Left column: Find out.
+            var findCol = NewColumn(rowGo.transform, "FindCol");
+            ui.BuildLabel(findCol, "Find out:", 15, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
+            pointsText = ui.BuildLabel(findCol, "", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
+            pointsText.enableWordWrapping = true;
+            pointsText.enableAutoSizing = true;
+            pointsText.fontSizeMin = ui.Sx(12);
+            pointsText.fontSizeMax = ui.Sx(17);
+            pointsText.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1f;
+
+            // Right column: Your details (header + text hidden per-task when empty).
+            var detCol = NewColumn(rowGo.transform, "DetailsCol");
+            detailsHeaderGo = ui.BuildLabel(detCol, "Your details (use if asked):", 15, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
+            detailsText = ui.BuildLabel(detCol, "", 16, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
+            detailsText.enableWordWrapping = true;
+            detailsText.enableAutoSizing = true;
+            detailsText.fontSizeMin = ui.Sx(12);
+            detailsText.fontSizeMax = ui.Sx(17);
+            detailsText.gameObject.AddComponent<LayoutElement>();
+
+            doneButton = ui.BuildButton(region, "Done", kGreen, 18, OnDonePressed);
+            var dle = doneButton.GetComponent<LayoutElement>();
+            int dh = ui.Sx(40);
+            dle.minHeight = dh; dle.preferredHeight = dh; dle.flexibleHeight = 0f;
+        }
+
+        // A left-aligned vertical column that flexes to share its row's width.
+        RectTransform NewColumn(Transform parent, string name) {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var vlg = go.AddComponent<VerticalLayoutGroup>();
+            vlg.spacing = ui.Sx(2);
+            vlg.childForceExpandWidth = true; vlg.childForceExpandHeight = false;
+            vlg.childControlWidth = true; vlg.childControlHeight = true;
+            vlg.childAlignment = TextAnchor.UpperLeft;
+            go.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            return go.GetComponent<RectTransform>();
         }
 
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {

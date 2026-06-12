@@ -171,19 +171,20 @@ namespace QoeDevice {
         // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
         static readonly string[] kTaskBriefings = {
             // 0 Training
-            "This is a practice conversation with Alfred, a friendly assistant. You'll practice the task format used in the whole study: each conversation gives you a few things to find out from the agent. Ask in your own words, in any order.\n\n" +
-            "Throughout the study, focus on how the conversation itself feels, not the place you're in or the topic.\n\n" +
-            "To talk, just speak naturally out loud after pressing Start, and you can interrupt the agent at any time.\n\n" +
-            "When you have everything, say goodbye — then press Done.\n\n" +
-            "When you're ready, press Start, then say hello to Alfred.",
+            "Practice conversation with Alfred. This is how every conversation in the study works.\n\n" +
+            "Each one gives you a short list of things to find out from the agent. Ask in your own words, in any order.\n\n" +
+            "Speak naturally out loud, and feel free to interrupt at any time.\n\n" +
+            "When you have everything, say goodbye, then press Done.\n\n" +
+            "Try to notice how the conversation feels to have — not the place or the topic.\n\n" +
+            "Press Start, then say hello to Alfred.",
             // 1–3 City (Shirts)
             "You're at your friend Sage's place, catching up.",
             "You're in a clothing store talking to Niko, the clerk. You're returning a shirt and also want some information.",
-            "You're at the back of the store with the manager, following up on your return.",
+            "You've already returned your shirt to the clerk. Now you're at the back of the store with the manager, following up on the refund and asking about membership.",
             // 4–6 Hotel
-            "You're checking in at the front desk of Hotel 333 with Hazel.",
-            "You run into Justin, a maintenance worker, on your hotel floor. You have an issue to report and a few questions.",
-            "You're at the hotel restaurant talking to Luka, the waiter.",
+            "You're checking in at the front desk of Hotel 333 with Hazel, under your reservation.",
+            "You've checked into room 111. You run into Justin, a maintenance worker, on your floor — you have an issue to report and a few questions.",
+            "You're at the hotel restaurant talking to Luka, the waiter. You're staying in room 111.",
             // 7–9 Museum
             "You're at the entrance of the Millennium Museum, planning your visit with Emma.",
             "You're at the Cyrus cylinder exhibit with Aleksander, the volunteer Emma mentioned.",
@@ -198,14 +199,14 @@ namespace QoeDevice {
         // consistent across participants. One string per task; slots split on '|'.
         static readonly string[] kTaskFindOuts = {
             // 0 Training
-            "His favourite season: ____|Years he has worked here: ____",
+            "His favourite season: ____|Years he has worked here: ____|Time his shift started today: ____|Café he recommends nearby: ____",
             // 1–3 City (Shirts)
             "Movie Sage saw last weekend: ____|Café Sage wants to try: ____|Day Sage is free to hang out: ____|Price Sage paid for their concert ticket: ____",
             "Today's closing time: ____|Price of the plain white T-shirt: ____|Days allowed for returns: ____|Floor of the fitting rooms: ____",
             "Days until the refund arrives: ____|Sunday opening time: ____|Member discount: ____ %|Name of the membership program: ____",
             // 4–6 Hotel
             "Breakfast start time: ____|Wi-Fi network name: ____|Checkout time: ____|Floor of the gym: ____",
-            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Number to call for room issues: ____",
+            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Extension to reach maintenance: ____",
             "Today's special: ____|Its price: ____|Dessert he recommends: ____|Kitchen closing time: ____",
             // 7–9 Museum
             "Today's closing time: ____|Student ticket price: ____|Hall of the Cyrus cylinder: ____|Name of the volunteer at that exhibit: ____",
@@ -226,13 +227,13 @@ namespace QoeDevice {
             // 1–3 City (Shirts)
             "You just started a new job at \"Northlight Studio\"|You're free on Saturday",
             "Return confirmation code: 1 1 1 1|Item: a red shirt",
-            "Return confirmation code: 1 1 1 1|Item: a red shirt",
+            "Your refund confirmation code: 1 1 1 1|You already returned a red shirt",
             // 4–6 Hotel
             "Reservation number: 2 4 6 8|Your name: Alex Taylor",
             "Your room: 111|The air conditioner in your room rattles",
             "Charge it to room 111|You're allergic to peanuts",
             // 7–9 Museum
-            "You're a student|Booking reference: 4 7 2 5",
+            "You're a student",
             "Emma at reception sent you here",
             "You heard about the exhibit from Emma at the entrance",
         };

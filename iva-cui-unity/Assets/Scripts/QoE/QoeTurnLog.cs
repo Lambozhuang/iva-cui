@@ -103,8 +103,9 @@ namespace QoeDevice {
             [JsonProperty("sid")]                    public string      sid;            // null for debug runs (never POSTed)
             [JsonProperty("condition_run_id")]       public int         conditionRunId;
             [JsonProperty("schema_version")]         public int         schemaVersion = 2;
-            [JsonProperty("task_number")]            public int?        taskNumber;     // null for training (mirrors start_task)
-            [JsonProperty("task_index")]             public int         taskIndex;      // 0=Training, 1..9 zone
+            [JsonProperty("run_type")]               public string      runType;        // "training" | "experiment" (mirrors start_task)
+            [JsonProperty("task_number")]            public int         taskNumber;     // 1-based within its phase (mirrors start_task; always ≥1)
+            [JsonProperty("task_index")]             public int         taskIndex;      // placement slot 0..9 (training=0, experiment=task_number)
             [JsonProperty("label")]                  public string      label;
             [JsonProperty("backend_scene")]          public string      backendScene;   // Training/Shirts/Hotel/Museum
             [JsonProperty("pipeline")]               public string      pipeline;       // "zone" | "training"
@@ -151,7 +152,7 @@ namespace QoeDevice {
         // the single run t0 shared by real and debug runs. Captures the clock base
         // (unix + Time.time back-to-back) so device timestamps can be mapped to wall
         // clock after the study.
-        public static void BeginRun(string sid, int conditionRunId, int? taskNumber, int taskIndex,
+        public static void BeginRun(string sid, int conditionRunId, bool isTraining, int taskNumber, int taskIndex,
                                     string label, string backendScene, bool isDebugRun,
                                     string deviceKind, int maxConditionDurationS, float runStartTime) {
             float t = runStartTime;
@@ -160,18 +161,19 @@ namespace QoeDevice {
             current = new Envelope {
                 sid = sid,
                 conditionRunId = conditionRunId,
+                runType = isTraining ? "training" : "experiment",
                 taskNumber = taskNumber,
                 taskIndex = taskIndex,
                 label = label,
                 backendScene = backendScene,
-                pipeline = taskIndex == 0 ? "training" : "zone",
+                pipeline = isTraining ? "training" : "zone",
                 isDebugRun = isDebugRun,
                 deviceKind = deviceKind,
                 deviceClock = new DeviceClock { unixMsAtRunStart = unix, timeDotTimeAtRunStart = t },
                 runStartTime = runStartTime,
                 maxConditionDurationS = maxConditionDurationS,
             };
-            QoeLog.Event("telemetry", $"run begin: run={conditionRunId} task={taskIndex} '{label}' pipeline={current.pipeline} debug={isDebugRun} epoch={runEpoch}");
+            QoeLog.Event("telemetry", $"run begin: run={conditionRunId} type={current.runType} task_number={taskNumber} place={taskIndex} '{label}' pipeline={current.pipeline} debug={isDebugRun} epoch={runEpoch}");
         }
 
         // Record one completed turn. Called at PLAYBACK START (when the agent's reply

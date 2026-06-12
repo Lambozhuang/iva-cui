@@ -102,10 +102,51 @@ namespace QoeDevice {
         // Maps task index → sceneRoots index: 0=Training, 1-3=City, 4-6=Hotel, 7-9=Museum.
         static readonly int[] kTaskSceneRoot = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3 };
 
-        // agent_id sent to the Pipecat bot per task index. The bot looks this up to
-        // pick the agent's persona + default voice (agents_config.py AGENTS dict).
-        // Parallel to kTaskLabels: t0=Training, t1-3=City, t4-6=Hotel, t7-9=Museum.
+        // agent_id sent to the Pipecat bot for EXPERIMENT tasks, indexed by
+        // task_number (1..9). Index 0 is the training placeholder (training uses
+        // kTrainingAgentIds instead). The bot looks this up to pick the agent's
+        // persona + default voice (agents_config.py AGENTS dict).
+        // task_number 1-3=City, 4-6=Hotel, 7-9=Museum.
         static readonly string[] kTaskAgentIds = { "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9" };
+
+        // ---- Training variants ----
+        // The study can run several training conversations, all in the SAME physical
+        // Alfred scene (placement index 0) with the SAME persona + voice, differing
+        // only in the things to find out — so a subject who practices more than once
+        // isn't bored by an identical warm-up. Selected by run_type=="training" +
+        // task_number (1-based): variant = task_number - 1. The server has matching
+        // agent_ids (t0/t0b/t0c) that share Alfred's persona but carry different
+        // FACTS. Keep these three arrays parallel; add a variant by extending all.
+        static readonly string[] kTrainingAgentIds = { "t0", "t0b", "t0c" };
+
+        static readonly string[] kTrainingBriefings = {
+            // Variant 1
+            "Practice conversation with Alfred. This is how every conversation in the study works.\n\n" +
+            "Each one gives you a short list of things to find out from the agent. Ask in your own words, in any order.\n\n" +
+            "Speak naturally out loud, and feel free to interrupt at any time.\n\n" +
+            "When you have everything, say goodbye, then press Done.\n\n" +
+            "Try to notice how the conversation feels to have — not the place or the topic.\n\n" +
+            "Press Start, then say hello to Alfred.",
+            // Variant 2
+            "Another quick practice with Alfred, to get comfortable before we begin.\n\n" +
+            "As before: find out the things listed, in your own words and any order.\n\n" +
+            "When you have everything, say goodbye, then press Done.\n\n" +
+            "Press Start, then say hello to Alfred.",
+            // Variant 3
+            "One more practice chat with Alfred.\n\n" +
+            "Find out the things listed, in your own words and any order.\n\n" +
+            "When you have everything, say goodbye, then press Done.\n\n" +
+            "Press Start, then say hello to Alfred.",
+        };
+
+        static readonly string[] kTrainingFindOuts = {
+            // Variant 1
+            "His favourite season: ____|Years he has worked here: ____|Time his shift started today: ____|Café he recommends nearby: ____",
+            // Variant 2
+            "His favourite hobby: ____|Number of languages he speaks: ____|Time the building opens: ____|His cat's name: ____",
+            // Variant 3
+            "His favourite drink: ____|Floor his office is on: ____|Time he takes his break: ____|Book he's reading: ____",
+        };
 
         [Header("Screen fade (VR comfort)")]
         [Tooltip("Auto-created on this GameObject if left null.")]
@@ -130,7 +171,15 @@ namespace QoeDevice {
         int activeRunId;
         string activeLabel;
         int maxDurationS;
-        int activeTaskIndex; // null/training → 0, task_number N → N
+        // The run's identity from start_task. run_type + 1-based task_number select
+        // the CONTENT (briefing/slots/details/agent_id); activeTaskIndex is the
+        // PLACEMENT slot into the flat 0..9 scene-resource arrays (spawn points,
+        // audio sources, zones), which are physical and Inspector-wired. Training
+        // (all variants) shares the one Alfred scene at placement 0; experiment
+        // task N places at index N. See ResolveContent / activeTaskIndex below.
+        bool isTraining;     // run_type == "training" (vs "experiment")
+        int activeTaskNumber; // 1-based within its phase (training 1..k, experiment 1..n)
+        int activeTaskIndex; // placement slot 0..9 into the scene-resource arrays
         bool isDebugRun;     // true when started by a debug Task button (no operator WS / no /end-condition)
         Coroutine runCo;
         Coroutine connectTimeoutCo;
@@ -169,14 +218,12 @@ namespace QoeDevice {
         // roughly what to chat about) without scripting the conversation — the
         // agents are open-ended one-offs. Kept to 1–2 short sentences so it reads
         // at a glance. Edit freely; index order matches kTaskLabels / spawn points.
+        // NOTE: index 0 is a DEAD placeholder kept only to align this array with the
+        // 0..9 placement layout (kTaskLabels / scene-resource arrays). Experiment
+        // runs index this by task_number (1..9); training content lives in the
+        // kTraining* arrays. Don't edit slot 0 expecting it to show — it never does.
         static readonly string[] kTaskBriefings = {
-            // 0 Training
-            "Practice conversation with Alfred. This is how every conversation in the study works.\n\n" +
-            "Each one gives you a short list of things to find out from the agent. Ask in your own words, in any order.\n\n" +
-            "Speak naturally out loud, and feel free to interrupt at any time.\n\n" +
-            "When you have everything, say goodbye, then press Done.\n\n" +
-            "Try to notice how the conversation feels to have — not the place or the topic.\n\n" +
-            "Press Start, then say hello to Alfred.",
+            "",                          // 0 unused (training → kTrainingBriefings)
             // 1–3 City (Shirts)
             "You're at your friend Sage's place, catching up.",
             "You're in a clothing store talking to Niko, the clerk. You're returning a shirt and also want some information.",
@@ -198,8 +245,7 @@ namespace QoeDevice {
         // the agent's server-side FACTS block (agents_config.py), so the values are
         // consistent across participants. One string per task; slots split on '|'.
         static readonly string[] kTaskFindOuts = {
-            // 0 Training
-            "His favourite season: ____|Years he has worked here: ____|Time his shift started today: ____|Café he recommends nearby: ____",
+            "",                          // 0 unused (training → kTrainingFindOuts)
             // 1–3 City (Shirts)
             "Movie Sage saw last weekend: ____|Café Sage wants to try: ____|Day Sage is free to hang out: ____|Price Sage paid for their concert ticket: ____",
             "Today's closing time: ____|Price of the plain white T-shirt: ____|Days allowed for returns: ____|Floor of the fitting rooms: ____",
@@ -222,8 +268,7 @@ namespace QoeDevice {
         // the find-out slots. Shown in the briefing AND kept in the runtime panel.
         // Empty string = no details for that task (only Training). Lines split on '|'.
         static readonly string[] kTaskDetails = {
-            // 0 Training
-            "",
+            "",                          // 0 unused (training has no details block)
             // 1–3 City (Shirts)
             "You just started a new job at \"Northlight Studio\"|You're free on Saturday",
             "Return confirmation code: 1 1 1 1|Item: a red shirt",
@@ -238,25 +283,48 @@ namespace QoeDevice {
             "You heard about the exhibit from Emma at the entrance",
         };
 
-        string BriefingFor(int taskIndex) {
-            string intro = (taskIndex >= 0 && taskIndex < kTaskBriefings.Length)
-                ? kTaskBriefings[taskIndex]
-                : "Press Start when you're ready to begin talking with the agent in front of you.";
-            var sb = new StringBuilder(intro);
-            string details = DetailsBlock(taskIndex);
+        // ---- Active-run content resolution ----
+        // All four selectors key off the run identity (isTraining + activeTaskNumber)
+        // rather than the placement index, so the training variants (which all share
+        // placement slot 0) get their own briefing/slots/agent. Experiment tasks use
+        // the flat arrays indexed by task_number (1..9). Variant index for training
+        // is task_number-1.
+        int ContentVariant => Mathf.Max(0, activeTaskNumber - 1);
+
+        static string PickOr(string[] table, int i, string fallback) =>
+            (table != null && i >= 0 && i < table.Length) ? table[i] : fallback;
+
+        string ActiveBriefingIntro() => isTraining
+            ? PickOr(kTrainingBriefings, ContentVariant, kTrainingBriefings[0])
+            : PickOr(kTaskBriefings, activeTaskNumber,
+                     "Press Start when you're ready to begin talking with the agent in front of you.");
+
+        // agent_id sent to the Pipecat bot for this run (persona + default voice).
+        string ActiveAgentId() => isTraining
+            ? PickOr(kTrainingAgentIds, ContentVariant, "t0")
+            : PickOr(kTaskAgentIds, activeTaskNumber, "t4");
+
+        // The full briefing text (intro + details + find-out slots) for the active run.
+        string ActiveBriefing() {
+            var sb = new StringBuilder(ActiveBriefingIntro());
+            string details = ActiveDetailsBlock();
             if (!string.IsNullOrEmpty(details))
                 sb.Append("\n\nYour details (use these if asked):\n").Append(details);
-            string points = FindOutsBlock(taskIndex);
+            string points = ActiveFindOutsBlock();
             if (!string.IsNullOrEmpty(points))
                 sb.Append("\n\nFind out:\n").Append(points);
             return sb.ToString();
         }
 
         // The find-out slots formatted as a bulleted block. Empty string if none.
-        string FindOutsBlock(int taskIndex) => BulletBlock(kTaskFindOuts, taskIndex);
+        // Training has no "your details" block (only find-out slots).
+        string ActiveFindOutsBlock() => isTraining
+            ? BulletBlock(kTrainingFindOuts, ContentVariant)
+            : BulletBlock(kTaskFindOuts, activeTaskNumber);
 
-        // The subject's concrete details as a bulleted block. Empty string if none.
-        string DetailsBlock(int taskIndex) => BulletBlock(kTaskDetails, taskIndex);
+        // The subject's concrete details as a bulleted block. Empty string if none
+        // (always empty for training).
+        string ActiveDetailsBlock() => isTraining ? "" : BulletBlock(kTaskDetails, activeTaskNumber);
 
         static string BulletBlock(string[] table, int taskIndex) {
             if (table == null || taskIndex < 0 || taskIndex >= table.Length) return "";
@@ -752,9 +820,15 @@ namespace QoeDevice {
             float cellW = (regionW - (cols - 1) * ui.Sx(4)) / cols;
             float cellH = Mathf.Max(ui.Sx(22), rootH * 0.16f * 0.42f);
             grid.cellSize = new Vector2(cellW, cellH);
-            for (int i = 0; i < kTaskLabels.Length; i++) {
-                int idx = i;
-                ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => DebugStartTask(idx));
+            // One button per training variant (Tr1..TrN → DebugStartTask(true, n))...
+            for (int v = 0; v < kTrainingFindOuts.Length; v++) {
+                int num = v + 1;
+                ui.BuildButton(region, $"Tr{num}", kTaskBtn, 14, () => DebugStartTask(true, num));
+            }
+            // ...then one per experiment task (task_number 1..9 → DebugStartTask(false, n)).
+            for (int i = 1; i < kTaskLabels.Length; i++) {
+                int num = i;
+                ui.BuildButton(region, kTaskLabels[i], kTaskBtn, 14, () => DebugStartTask(false, num));
             }
         }
 
@@ -814,7 +888,7 @@ namespace QoeDevice {
         // OnStartPressed begins the actual timed run.
         void EnterBriefing() {
             StudyControls.conversationGateOpen = false;
-            if (briefingText != null) briefingText.text = BriefingFor(activeTaskIndex);
+            if (briefingText != null) briefingText.text = ActiveBriefing();
             TransitionPhase(DevicePhase.Briefing);
             // Pipecat: connect to this task's agent NOW and release its greeting so it
             // introduces itself WHILE the subject reads the brief. This hides the
@@ -824,12 +898,15 @@ namespace QoeDevice {
             // conversationGateOpen, still false) — so the greeting is one-way preamble,
             // NOT a measured turn. Start just opens the gate + timer (OnStartPressed).
             if (pipecat != null) {
+                // Audio sink + zone are PLACEMENT (the physical avatar in the scene),
+                // so they index by activeTaskIndex. agent_id is CONTENT (which persona
+                // answers), so it comes from the run identity (training variant or
+                // experiment task_number).
                 AudioSource sink = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentAudioSources.Length)
                     ? taskAgentAudioSources[activeTaskIndex] : null;
                 ActivationZone zone = (activeTaskIndex >= 0 && activeTaskIndex < taskAgentZones.Length)
                     ? taskAgentZones[activeTaskIndex] : null;
-                string agentId = (activeTaskIndex >= 0 && activeTaskIndex < kTaskAgentIds.Length)
-                    ? kTaskAgentIds[activeTaskIndex] : "t4";
+                string agentId = ActiveAgentId();
                 pipecat.Connect(sink, agentId, zone);
                 pipecat.OpenConversation(); // release greeting now (held until DC opens)
             }
@@ -847,9 +924,9 @@ namespace QoeDevice {
             // just makes the mic hot (PipecatClient gates micTrack on conversationGateOpen).
             conversationWrappedUp = false; // Done hidden until the agent wraps up...
             doneFallbackReached = false;   // ...or the fixed fallback delay elapses
-            if (pointsText != null) pointsText.text = FindOutsBlock(activeTaskIndex);
+            if (pointsText != null) pointsText.text = ActiveFindOutsBlock();
             // Details section: populate and show only when this task has details.
-            string details = DetailsBlock(activeTaskIndex);
+            string details = ActiveDetailsBlock();
             bool hasDetails = !string.IsNullOrEmpty(details);
             if (detailsText != null) detailsText.text = details;
             if (detailsText != null) detailsText.gameObject.SetActive(hasDetails);
@@ -865,10 +942,13 @@ namespace QoeDevice {
             // single point shared by real and debug runs (debug==real). Captures the
             // run identity + the device clock base. Both audio pipelines push their
             // turn-records into this until FinishRun finalizes it.
-            int? taskNumberForRun = activeTaskIndex == 0 ? (int?)null : activeTaskIndex;
-            string backendSceneForRun = (activeTaskIndex >= 0 && activeTaskIndex < kTaskBackendScenes.Length)
-                ? kTaskBackendScenes[activeTaskIndex] : "";
-            QoeTurnLog.BeginRun(isDebugRun ? null : activeSid, activeRunId, taskNumberForRun, activeTaskIndex,
+            // task_number is now always ≥1 (the server numbers training runs too).
+            // backend_scene is by placement (Training for the training scene, else
+            // the experiment scene at this task_number).
+            string backendSceneForRun = isTraining
+                ? "Training"
+                : ((activeTaskIndex >= 0 && activeTaskIndex < kTaskBackendScenes.Length) ? kTaskBackendScenes[activeTaskIndex] : "");
+            QoeTurnLog.BeginRun(isDebugRun ? null : activeSid, activeRunId, isTraining, activeTaskNumber, activeTaskIndex,
                 activeLabel, backendSceneForRun, isDebugRun, deviceKind, maxDurationS, Time.time);
             TransitionPhase(DevicePhase.RunningTask);
             if (runCo != null) { StopCoroutine(runCo); }
@@ -881,15 +961,23 @@ namespace QoeDevice {
         // real run. The only things it skips are the operator-only bits: the
         // WebSocket ready/start handshake and the /end-condition POST. Uses
         // debugRunDurationS instead of the operator's max_condition_duration_s.
-        public void DebugStartTask(int taskIndex) {
+        // training=true selects a training variant (1-based variantNumber into
+        // kTraining* arrays, placement slot 0); training=false selects experiment
+        // task number 1..9 (placement slot == task number). Mirrors what a real
+        // start_task sets from run_type + task_number.
+        public void DebugStartTask(bool training, int number) {
             if (runCo != null) { StopCoroutine(runCo); runCo = null; }
-            isDebugRun     = true;
-            activeTaskIndex = taskIndex;
-            activeLabel    = (taskIndex >= 0 && taskIndex < kTaskLabels.Length) ? kTaskLabels[taskIndex] : $"Task {taskIndex}";
-            activeSid      = null;
-            maxDurationS   = Mathf.Max(1, debugRunDurationS);
-            QoeLog.Event("task", $"DEBUG run start: '{activeLabel}' index={taskIndex} duration={maxDurationS}s");
-            TeleportToTask(taskIndex);
+            isDebugRun       = true;
+            isTraining       = training;
+            activeTaskNumber = Mathf.Max(1, number);
+            activeTaskIndex  = training ? 0 : activeTaskNumber;
+            activeLabel      = training
+                ? $"Training {activeTaskNumber}"
+                : ((activeTaskNumber >= 0 && activeTaskNumber < kTaskLabels.Length) ? kTaskLabels[activeTaskNumber] : $"Task {activeTaskNumber}");
+            activeSid        = null;
+            maxDurationS     = Mathf.Max(1, debugRunDurationS);
+            QoeLog.Event("task", $"DEBUG run start: '{activeLabel}' training={training} task_number={activeTaskNumber} place={activeTaskIndex} duration={maxDurationS}s");
+            TeleportToTask(activeTaskIndex);
             // Same as a real run: show the briefing and gate the conversation
             // until Start is pressed (OnStartPressed begins the timer).
             EnterBriefing();
@@ -1037,17 +1125,27 @@ namespace QoeDevice {
             activeLabel  = data["label"]?.ToString() ?? "?";
             maxDurationS = data["max_condition_duration_s"]?.ToObject<int>() ?? 60;
 
-            // task_number is null for training runs, 1-based otherwise.
-            int? taskNumber = data["task_number"]?.Type == JTokenType.Null
-                ? (int?)null
-                : data["task_number"]?.ToObject<int?>();
-            activeTaskIndex = taskNumber ?? 0;
+            // run_type selects the phase (training vs experiment); task_number is now
+            // always ≥1, numbered 1-based WITHIN its phase. Back-compat: if run_type
+            // is absent (older server), infer training from a null/missing task_number.
+            string runType = data["run_type"]?.ToString();
+            bool hasTaskNumber = data["task_number"] != null && data["task_number"].Type != JTokenType.Null;
+            if (!string.IsNullOrEmpty(runType))
+                isTraining = runType == "training";
+            else
+                isTraining = !hasTaskNumber; // legacy fallback
+            activeTaskNumber = hasTaskNumber ? data["task_number"].ToObject<int>() : 1;
+            if (activeTaskNumber < 1) activeTaskNumber = 1;
 
-            string taskDesc = taskNumber.HasValue ? $"task_number={taskNumber.Value}" : "training (task_number=null)";
-            QoeLog.Event("task", $"start_task: label='{activeLabel}' {taskDesc} duration={maxDurationS}s run={activeRunId}");
+            // Placement slot into the flat 0..9 scene-resource arrays: training (all
+            // variants) shares the one Alfred scene at slot 0; experiment task N
+            // places at slot N (1..9).
+            activeTaskIndex = isTraining ? 0 : activeTaskNumber;
+
+            QoeLog.Event("task", $"start_task: label='{activeLabel}' run_type={(isTraining ? "training" : "experiment")} task_number={activeTaskNumber} place={activeTaskIndex} duration={maxDurationS}s run={activeRunId}");
             if (string.IsNullOrEmpty(activeSid)) QoeLog.Warn("task", "session_id is null/empty in start_task payload");
             if (activeTaskIndex < 0 || activeTaskIndex >= taskSpawnPoints.Length)
-                QoeLog.Warn("task", $"task index {activeTaskIndex} out of range for taskSpawnPoints[{taskSpawnPoints.Length}] — Ready will fail to teleport");
+                QoeLog.Warn("task", $"placement index {activeTaskIndex} out of range for taskSpawnPoints[{taskSpawnPoints.Length}] — Ready will fail to teleport");
 
             TransitionPhase(DevicePhase.TaskReceived);
             SetHud($"Task received ('{activeLabel}') — press Ready to start");

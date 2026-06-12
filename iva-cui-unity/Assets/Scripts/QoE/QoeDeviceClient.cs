@@ -812,7 +812,7 @@ namespace QoeDevice {
         // front of the subject below the agent for an easy downward glance. Larger
         // text floor/ceiling than the debug column since there's horizontal room.
         void BuildPointsPanelBand(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0f), new Vector2(0.85f, 0.26f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.1f), new Vector2(0.85f, 0.34f), ui.Sx(6));
             pointsGo = region.gameObject;
             region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
 

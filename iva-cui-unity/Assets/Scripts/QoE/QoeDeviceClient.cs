@@ -826,7 +826,7 @@ namespace QoeDevice {
         // button is NOT in this card — it lives in the top-right controls cluster
         // (BuildControlsCluster) so it can't overlap the text as the band fills.
         void BuildPointsPanelBand(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.16f), new Vector2(0.85f, 0.54f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.1f, 0.16f), new Vector2(0.9f, 0.54f), ui.Sx(6));
             pointsGo = region.gameObject;
             region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
 

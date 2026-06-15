@@ -809,10 +809,11 @@ namespace QoeDevice {
 
         // Subject build: a wide bottom-center band. A two-column row (find-out
         // slots | your details) over a centered Done button, so it sits squarely in
-        // front of the subject below the agent for an easy downward glance. Larger
-        // text floor/ceiling than the debug column since there's horizontal room.
+        // front of the subject below the agent for an easy downward glance. Raised
+        // off the floor and kept to a compact text size so the longest tasks
+        // (4–5 find-out bullets) fit without overflowing the box (pilot feedback).
         void BuildPointsPanelBand(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.1f), new Vector2(0.85f, 0.34f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.22f), new Vector2(0.85f, 0.48f), ui.Sx(6));
             pointsGo = region.gameObject;
             region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
 
@@ -835,22 +836,22 @@ namespace QoeDevice {
 
             // Left column: Find out.
             var findCol = NewColumn(rowGo.transform, "FindCol");
-            ui.BuildLabel(findCol, "Find out:", 15, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
-            pointsText = ui.BuildLabel(findCol, "", 16, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
+            ui.BuildLabel(findCol, "Find out:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
+            pointsText = ui.BuildLabel(findCol, "", 13, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             pointsText.enableWordWrapping = true;
             pointsText.enableAutoSizing = true;
-            pointsText.fontSizeMin = ui.Sx(12);
-            pointsText.fontSizeMax = ui.Sx(17);
+            pointsText.fontSizeMin = ui.Sx(10);
+            pointsText.fontSizeMax = ui.Sx(14);
             pointsText.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1f;
 
             // Right column: Your details (header + text hidden per-task when empty).
             var detCol = NewColumn(rowGo.transform, "DetailsCol");
-            detailsHeaderGo = ui.BuildLabel(detCol, "Your details (use if asked):", 15, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
-            detailsText = ui.BuildLabel(detCol, "", 16, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
+            detailsHeaderGo = ui.BuildLabel(detCol, "Your details (use if asked):", 13, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
+            detailsText = ui.BuildLabel(detCol, "", 13, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
             detailsText.enableWordWrapping = true;
             detailsText.enableAutoSizing = true;
-            detailsText.fontSizeMin = ui.Sx(12);
-            detailsText.fontSizeMax = ui.Sx(17);
+            detailsText.fontSizeMin = ui.Sx(10);
+            detailsText.fontSizeMax = ui.Sx(14);
             detailsText.gameObject.AddComponent<LayoutElement>();
 
             doneButton = ui.BuildButton(region, "Done", kGreen, 18, OnDonePressed);
@@ -871,6 +872,73 @@ namespace QoeDevice {
             go.AddComponent<LayoutElement>().flexibleWidth = 1f;
             return go.GetComponent<RectTransform>();
         }
+
+#if UNITY_EDITOR
+        // ---- Edit-mode layout preview (no Play, no connect/briefing flow) ----
+        // Build ONLY the subject-facing prompt card (the bottom band) into
+        // rootContainer and fill it with worst-case text, so its layout can be
+        // eyeballed for overflow in the Scene/Game view straight from the
+        // inspector. Driven by QoeDeviceClientEditor's buttons and the component
+        // context menu. Editor-only: stripped from the subject build entirely.
+        // The objects it creates aren't meant to persist — Clear them (or just
+        // press Play, which rebuilds the whole UI from scratch) when done; even if
+        // saved into the scene, BuildUi() wipes all rootContainer children on Start.
+        [ContextMenu("Preview HUD prompt card")]
+        public void EditorPreviewPromptCard() {
+            if (rootContainer == null) {
+                QoeLog.Err("ui", "rootContainer not assigned — cannot preview the prompt card.");
+                return;
+            }
+            EditorClearPreview();
+
+            rootContainer.anchorMin = Vector2.zero; rootContainer.anchorMax = Vector2.one;
+            rootContainer.offsetMin = Vector2.zero; rootContainer.offsetMax = Vector2.zero;
+
+            Canvas.ForceUpdateCanvases();
+            float rootW = rootContainer.rect.width;
+            ui.scale = rootW > 0 ? Mathf.Clamp(rootW / 600f, 0.05f, 4f) : 1f;
+
+            BuildPointsPanelBand(rootContainer);
+
+            // Heaviest real content: the longest find-out set beside the longest
+            // details set. They come from different tasks, so the pairing is a touch
+            // heavier than any single run — a clean fit here means every task fits.
+            if (pointsText != null) pointsText.text = LongestBulletBlock(kTaskFindOuts);
+            string details = LongestBulletBlock(kTaskDetails);
+            if (detailsText != null) { detailsText.text = details; detailsText.gameObject.SetActive(true); }
+            if (detailsHeaderGo != null) detailsHeaderGo.SetActive(true);
+
+            if (pointsGo != null) pointsGo.SetActive(true);
+            if (doneButton != null) doneButton.gameObject.SetActive(true);
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(rootContainer);
+            QoeLog.Event("ui", "Prompt-card preview built (worst-case text). Use 'Clear HUD preview' or press Play to remove.");
+        }
+
+        [ContextMenu("Clear HUD preview")]
+        public void EditorClearPreview() {
+            if (rootContainer == null) return;
+            for (int i = rootContainer.childCount - 1; i >= 0; i--)
+                DestroyImmediate(rootContainer.GetChild(i).gameObject);
+            StripComponent<VerticalLayoutGroup>(rootContainer.gameObject);
+            StripComponent<HorizontalLayoutGroup>(rootContainer.gameObject);
+            StripComponent<ContentSizeFitter>(rootContainer.gameObject);
+            pointsGo = detailsHeaderGo = null;
+            pointsText = detailsText = null;
+            doneButton = null;
+        }
+
+        // The bullet block (see BulletBlock) for whichever row of `table` carries
+        // the most text — the worst case for the overflow preview.
+        static string LongestBulletBlock(string[] table) {
+            int best = -1, bestLen = -1;
+            for (int i = 0; i < table.Length; i++) {
+                if (string.IsNullOrEmpty(table[i]) || table[i].Length <= bestLen) continue;
+                bestLen = table[i].Length; best = i;
+            }
+            return best < 0 ? "" : BulletBlock(table, best);
+        }
+#endif
 
         void BuildTaskGrid(RectTransform parent, float rootW, float rootH) {
             const float gridFracW = 0.72f;

@@ -736,9 +736,11 @@ namespace QoeDevice {
         // gate and begins the timer — see OnStartPressed. Built separately from
         // the rating client's center region so neither clobbers the other.
         void BuildBriefingPanel(RectTransform parent) {
-            // Near-full-canvas so even the long training briefing (format
-            // explanation + find-out slots + details) has room.
-            var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.04f, 0.08f), new Vector2(0.96f, 0.94f), ui.Sx(6));
+            // Tall and centered, but kept narrower than full-canvas so the briefing
+            // reads as a comfortable column rather than edge-to-edge text. Plenty of
+            // vertical room (y 0.08–0.94) absorbs the extra wrap from the narrower
+            // width, even for the long training briefing (format + slots + details).
+            var region = ui.BuildAnchoredRegion(parent, "Briefing", new Vector2(0.18f, 0.08f), new Vector2(0.82f, 0.94f), ui.Sx(6));
             briefingGo = region.gameObject;
             var bg = region.gameObject.AddComponent<Image>();
             bg.color = new Color(0f, 0f, 0f, 0.6f);

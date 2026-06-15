@@ -488,7 +488,11 @@ namespace QoeDevice {
             if (topLeftGo    != null) topLeftGo.SetActive(running);
             if (logPanelGo   != null) logPanelGo.SetActive(debugMode);
             if (taskGridGo   != null) taskGridGo.SetActive(debugMode);
-            if (connStatusGo != null) connStatusGo.SetActive(true);
+            // Connection status (Connected/Disconnected) — kept for the operator in
+            // debug, but hidden from the subject once a task is running so it isn't a
+            // distraction during the conversation. Still shown to the subject before
+            // a run (idle/briefing) so connection problems are visible while waiting.
+            if (connStatusGo != null) connStatusGo.SetActive(debugMode || !running);
             if (errorGo      != null) errorGo.SetActive(!string.IsNullOrEmpty(lastError));
 
             SetActive(connectButton,       debugMode || (canConnect   && !ratingVisible));
@@ -558,9 +562,11 @@ namespace QoeDevice {
         }
 
         // Top-left: recording light (gray idle / red recording) + "REC" label + timer.
-        // Only visible while a task is running.
+        // Only visible while a task is running. Nudged in from the far-left edge
+        // toward the center line so the subject can read the timer + mic meter with
+        // a smaller glance off the agent (pilot feedback: too far in the corner).
         void BuildTopLeftCluster(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0f, 0.84f), new Vector2(0.42f, 1f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "TopLeft", new Vector2(0.14f, 0.84f), new Vector2(0.56f, 1f), ui.Sx(6));
             topLeftGo = region.gameObject;
             var hg = region.gameObject.AddComponent<HorizontalLayoutGroup>();
             hg.spacing = ui.Sx(6);
@@ -826,7 +832,7 @@ namespace QoeDevice {
         // button is NOT in this card — it lives in the top-right controls cluster
         // (BuildControlsCluster) so it can't overlap the text as the band fills.
         void BuildPointsPanelBand(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.1f, 0.16f), new Vector2(0.9f, 0.54f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.16f), new Vector2(0.85f, 0.54f), ui.Sx(6));
             pointsGo = region.gameObject;
             region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.8f);
 

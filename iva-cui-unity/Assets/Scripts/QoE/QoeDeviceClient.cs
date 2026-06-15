@@ -642,6 +642,17 @@ namespace QoeDevice {
                 le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 1f;
             }
 
+            // Subject's Done button. Lives in this top-right cluster (where Connect
+            // sits) rather than inside the prompt-card band, so it never overlaps the
+            // find-out text as the card fills. Debug keeps its own Done in the left
+            // column (BuildPointsPanelColumn); this cluster's other buttons are debug/
+            // connect-only, so during a subject run Done is the only one showing here.
+            if (!debugMode) {
+                doneButton = ui.BuildButton(region, "Done", kGreen, 16, OnDonePressed);
+                var le = doneButton.GetComponent<LayoutElement>();
+                le.minHeight = btnH; le.preferredHeight = btnH; le.flexibleHeight = 1f;
+            }
+
             if (debugMode && ratingClient != null) {
                 previewRatingButton = ui.BuildButton(region, "Preview rating", kPreview, 14, ratingClient.LoadDebugPreview);
                 var le = previewRatingButton.GetComponent<LayoutElement>();
@@ -807,13 +818,15 @@ namespace QoeDevice {
             dle.minHeight = dh; dle.preferredHeight = dh; dle.flexibleHeight = 0f;
         }
 
-        // Subject build: a wide bottom-center band. A two-column row (find-out
-        // slots | your details) over a centered Done button, so it sits squarely in
-        // front of the subject below the agent for an easy downward glance. Raised
-        // off the floor and kept to a compact text size so the longest tasks
-        // (4–5 find-out bullets) fit without overflowing the box (pilot feedback).
+        // Subject build: a wide bottom-center band holding the two-column row
+        // (find-out slots | your details), so it sits squarely in front of the
+        // subject below the agent for an easy downward glance. Raised off the floor
+        // and kept to a compact text size so the longest tasks (4–5 find-out
+        // bullets) fit without overflowing the box (pilot feedback). The Done
+        // button is NOT in this card — it lives in the top-right controls cluster
+        // (BuildControlsCluster) so it can't overlap the text as the band fills.
         void BuildPointsPanelBand(RectTransform parent) {
-            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.22f), new Vector2(0.85f, 0.48f), ui.Sx(6));
+            var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.15f, 0.16f), new Vector2(0.85f, 0.54f), ui.Sx(6));
             pointsGo = region.gameObject;
             region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
 
@@ -836,28 +849,23 @@ namespace QoeDevice {
 
             // Left column: Find out.
             var findCol = NewColumn(rowGo.transform, "FindCol");
-            ui.BuildLabel(findCol, "Find out:", 13, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
-            pointsText = ui.BuildLabel(findCol, "", 13, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
+            ui.BuildLabel(findCol, "Find out:", 11, FontStyles.Bold, new Color(0.8f, 0.85f, 0.9f), TextAlignmentOptions.TopLeft);
+            pointsText = ui.BuildLabel(findCol, "", 11, FontStyles.Normal, Color.white, TextAlignmentOptions.TopLeft);
             pointsText.enableWordWrapping = true;
             pointsText.enableAutoSizing = true;
-            pointsText.fontSizeMin = ui.Sx(10);
-            pointsText.fontSizeMax = ui.Sx(14);
+            pointsText.fontSizeMin = ui.Sx(8);
+            pointsText.fontSizeMax = ui.Sx(12);
             pointsText.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1f;
 
             // Right column: Your details (header + text hidden per-task when empty).
             var detCol = NewColumn(rowGo.transform, "DetailsCol");
-            detailsHeaderGo = ui.BuildLabel(detCol, "Your details (use if asked):", 13, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
-            detailsText = ui.BuildLabel(detCol, "", 13, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
+            detailsHeaderGo = ui.BuildLabel(detCol, "Your details (use if asked):", 11, FontStyles.Bold, new Color(0.95f, 0.85f, 0.5f), TextAlignmentOptions.TopLeft).gameObject;
+            detailsText = ui.BuildLabel(detCol, "", 11, FontStyles.Bold, new Color(1f, 0.95f, 0.75f), TextAlignmentOptions.TopLeft);
             detailsText.enableWordWrapping = true;
             detailsText.enableAutoSizing = true;
-            detailsText.fontSizeMin = ui.Sx(10);
-            detailsText.fontSizeMax = ui.Sx(14);
+            detailsText.fontSizeMin = ui.Sx(8);
+            detailsText.fontSizeMax = ui.Sx(12);
             detailsText.gameObject.AddComponent<LayoutElement>();
-
-            doneButton = ui.BuildButton(region, "Done", kGreen, 18, OnDonePressed);
-            var dle = doneButton.GetComponent<LayoutElement>();
-            int dh = ui.Sx(40);
-            dle.minHeight = dh; dle.preferredHeight = dh; dle.flexibleHeight = 0f;
         }
 
         // A left-aligned vertical column that flexes to share its row's width.
@@ -909,7 +917,8 @@ namespace QoeDevice {
             if (detailsHeaderGo != null) detailsHeaderGo.SetActive(true);
 
             if (pointsGo != null) pointsGo.SetActive(true);
-            if (doneButton != null) doneButton.gameObject.SetActive(true);
+            // The Done button isn't part of this card (it lives in the top-right
+            // controls cluster in a real run), so the preview shows the card alone.
 
             LayoutRebuilder.ForceRebuildLayoutImmediate(rootContainer);
             QoeLog.Event("ui", "Prompt-card preview built (worst-case text). Use 'Clear HUD preview' or press Play to remove.");

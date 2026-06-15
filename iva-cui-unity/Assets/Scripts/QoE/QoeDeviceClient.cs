@@ -828,7 +828,7 @@ namespace QoeDevice {
         void BuildPointsPanelBand(RectTransform parent) {
             var region = ui.BuildAnchoredRegion(parent, "Points", new Vector2(0.1f, 0.16f), new Vector2(0.9f, 0.54f), ui.Sx(6));
             pointsGo = region.gameObject;
-            region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.5f);
+            region.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.8f);
 
             var outer = region.gameObject.AddComponent<VerticalLayoutGroup>();
             outer.spacing = ui.Sx(6);

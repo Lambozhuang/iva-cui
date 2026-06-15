@@ -33,6 +33,13 @@ public class PipecatClient : MonoBehaviour
     [Tooltip("Capture device. Don't pick a virtual/loopback device — it echoes.")]
     public string micDeviceName = "";
 
+    [Range(0f, 8f)]
+    [Tooltip("Linear gain applied to captured mic samples before they're sent to the agent. " +
+             "1 = unchanged. Raise if the agent isn't picking up a soft-spoken participant; " +
+             "keep it modest (samples are clamped to avoid hard clipping). " +
+             "Adjustable live in the inspector while the scene is running.")]
+    public float micGain = 1f;
+
     [Header("Harsh-network robustness")]
     [Tooltip("Auto re-establish the media path (ICE restart) if the peer connection drops " +
              "to Disconnected/Failed under high loss/RTT, instead of leaving the session dead. " +
@@ -94,6 +101,7 @@ public class PipecatClient : MonoBehaviour
     private AudioStreamTrack micTrack;
     private AudioStreamTrack remoteTrack;
     private AudioSource micSource;
+    private MicGainFilter micGainFilter; // scales captured samples (micGain) ahead of WebRTC's filter
     private AudioSource agentSink;     // the current agent avatar's lip-sync AudioSource
     private ActivationZone agentZone;  // its ActivationZone, for talk/listen animation
     private AudioClip micClip;
@@ -181,6 +189,7 @@ public class PipecatClient : MonoBehaviour
         if (sendStream != null) { sendStream.Dispose(); sendStream = null; }
         if (pc != null) { pc.Close(); pc = null; }
         if (!string.IsNullOrEmpty(micDevice)) { Microphone.End(micDevice); micDevice = null; }
+        if (micGainFilter != null) { Destroy(micGainFilter); micGainFilter = null; }
         if (micSource != null) { Destroy(micSource); micSource = null; }
         remoteTrack = null; agentSink = null; agentLipSync = null;
         dcReady = greetReleased = clientReadySent = IsConnected = HasAgentSpoken = false;
@@ -220,6 +229,13 @@ public class PipecatClient : MonoBehaviour
         }
         Debug.Log($"[Pipecat] Using mic: '{micDevice}'");
         micSource = gameObject.AddComponent<AudioSource>();
+        // Gain filter, added BEFORE the AudioStreamTrack ctor (which appends
+        // WebRTC's own capture filter) so it runs first in the DSP chain and
+        // scales the samples WebRTC then grabs + transmits. com.unity.webrtc reads
+        // raw filter-chain buffers, so AudioSource.volume wouldn't affect the sent
+        // audio — this filter is the place to apply mic gain.
+        micGainFilter = gameObject.AddComponent<MicGainFilter>();
+        micGainFilter.owner = this;
         micClip = Microphone.Start(micDevice, true, 1, 48000);
 
         float t = 0f;
@@ -512,10 +528,12 @@ public class PipecatClient : MonoBehaviour
         int pos = Microphone.GetPosition(micDevice) - _micSampleBuf.Length;
         if (pos < 0) { return; }
         micClip.GetData(_micSampleBuf, pos);
+        float g = micGain < 0f ? 0f : micGain;  // match the gain applied to the transmitted signal
         float peak = 0f;
         for (int i = 0; i < _micSampleBuf.Length; i++)
         {
-            float a = _micSampleBuf[i]; if (a < 0f) a = -a;
+            float a = _micSampleBuf[i] * g; if (a < 0f) a = -a;
+            if (a > 1f) a = 1f;  // same soft clamp as MicGainFilter
             if (a > peak) peak = a;
         }
         // Attack quickly toward a rising level, release slowly so it doesn't flicker.
@@ -550,5 +568,30 @@ public class PipecatClient : MonoBehaviour
     private void OnDestroy()
     {
         Disconnect();
+    }
+}
+
+// Multiplies the captured mic buffer in-place by PipecatClient.micGain. Added to
+// the mic AudioSource's GameObject BEFORE com.unity.webrtc's own capture filter,
+// so it runs first in the DSP chain and scales the samples WebRTC then grabs and
+// transmits (WebRTC reads raw filter-chain buffers, bypassing AudioSource.volume).
+// Samples are soft-limited to avoid hard digital clipping when gain is high.
+public class MicGainFilter : MonoBehaviour
+{
+    [NonSerialized] public PipecatClient owner;
+
+    private void OnAudioFilterRead(float[] data, int channels)
+    {
+        // Read once per buffer; on the audio thread, so no Unity API calls here.
+        float g = owner != null ? owner.micGain : 1f;
+        if (g == 1f) return;
+        if (g < 0f) g = 0f;
+        for (int i = 0; i < data.Length; i++)
+        {
+            float s = data[i] * g;
+            // Soft clamp into [-1, 1] so a high gain saturates rather than wraps.
+            if (s > 1f) s = 1f; else if (s < -1f) s = -1f;
+            data[i] = s;
+        }
     }
 }

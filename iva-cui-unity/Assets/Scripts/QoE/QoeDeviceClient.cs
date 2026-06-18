@@ -141,11 +141,11 @@ namespace QoeDevice {
 
         static readonly string[] kTrainingFindOuts = {
             // Variant 1
-            "His favourite season: ____|Years he has worked here: ____|Time his shift started today: ____|Café he recommends nearby: ____",
+            "His favourite season: ____|His favourite hobby: ____|His favourite book: ____|Number of languages he speaks: ____",
             // Variant 2
-            "His favourite hobby: ____|Number of languages he speaks: ____|Time the building opens: ____|His cat's name: ____",
+            "His favourite colour: ____|His cat's name: ____|Kind of music he likes: ____|His favourite number: ____",
             // Variant 3
-            "His favourite drink: ____|Floor his office is on: ____|Time he takes his break: ____|Book he's reading: ____",
+            "His favourite drink: ____|His favourite animal: ____|His favourite song: ____|Books he's read this year: ____",
         };
 
         [Header("Screen fade (VR comfort)")]
@@ -252,7 +252,7 @@ namespace QoeDevice {
             "Days until the refund arrives: ____|Sunday opening time: ____|Member discount: ____ %|Name of the membership program: ____",
             // 4–6 Hotel
             "Breakfast start time: ____|Wi-Fi network name: ____|Checkout time: ____|Floor of the gym: ____",
-            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Extension to reach maintenance: ____",
+            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Number to call for maintenance: ____",
             "Today's special: ____|Its price: ____|Dessert he recommends: ____|Kitchen closing time: ____",
             // 7–9 Museum
             "Today's closing time: ____|Student ticket price: ____|Hall of the Cyrus cylinder: ____|Name of the volunteer at that exhibit: ____",

@@ -247,17 +247,17 @@ namespace QoeDevice {
         static readonly string[] kTaskFindOuts = {
             "",                          // 0 unused (training → kTrainingFindOuts)
             // 1–3 City (Shirts)
-            "Movie Sage saw last weekend: ____|Café Sage wants to try: ____|Day Sage is free to hang out: ____|Price Sage paid for their concert ticket: ____",
+            "Sage's movie last weekend: ____|Café Sage wants to try: ____|Sage's free day to meet: ____|Sage's concert ticket price: ____",
             "Today's closing time: ____|Price of the plain white T-shirt: ____|Days allowed for returns: ____|Floor of the fitting rooms: ____",
-            "Days until the refund arrives: ____|Sunday opening time: ____|Member discount: ____ %|Name of the membership program: ____",
+            "Refund arrival (days): ____|Sunday opening time: ____|Member discount: ____ %|Name of the membership program: ____",
             // 4–6 Hotel
             "Breakfast start time: ____|Wi-Fi network name: ____|Checkout time: ____|Floor of the gym: ____",
-            "What he's repairing right now: ____|When the pool reopens: ____|Floor of the ice machine: ____|Number to call for maintenance: ____",
+            "His current repair job: ____|Pool reopening time: ____|Floor of the ice machine: ____|Maintenance phone number: ____",
             "Today's special: ____|Its price: ____|Dessert he recommends: ____|Kitchen closing time: ____",
             // 7–9 Museum
             "Today's closing time: ____|Student ticket price: ____|Hall of the Cyrus cylinder: ____|Name of the volunteer at that exhibit: ____",
-            "Material of the cylinder: ____|Year it dates from: ____|City it was found in: ____|Length of the audio guide: ____",
-            "Time of today's guided talk: ____|Name of the photo collection on display: ____|Hall where the speech recording plays: ____|Year this exhibit opened: ____",
+            "Material of the cylinder: ____|Year of origin: ____|City of discovery: ____|Length of the audio guide: ____",
+            "Time of today's guided talk: ____|Name of the photo collection on display: ____|Hall of the speech recording: ____|Exhibit opening year: ____",
         };
 
         // Concrete details the subject "has" for this conversation — e.g. a

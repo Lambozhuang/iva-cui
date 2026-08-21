@@ -61,6 +61,20 @@ every run; turn and latency analysis happens offline.
 - Agents `t0`…`t9` map to task indices (t0 training, t1–3 city, t4–6 hotel, t7–9 museum);
   personas and voices live on the server.
 
+## Transport details (verified against source)
+
+Both directions carry Opus at 48 kHz in 20 ms frames (voip mode), at fixed bitrates with
+no adaptation: 32 kbps mono on the uplink (libwebrtc M116 defaults, via
+`com.unity.webrtc` 3.0.0-pre.8) and 96 kbps stereo on the downlink (aiortc 1.13.0
+defaults). There is **no FEC on the wire in either direction** — `useinbandfec=1` in the
+client's offer is a receiver capability (RFC 7587) that aiortc ignores, so
+`PipecatClient.MungeOpusFec` is redundant. Loss handling is asymmetric on the decode
+side: downlink loss is concealed by libwebrtc's NetEq (Expand/Merge PLC, unconditional),
+while aiortc has no PLC at all, so uplink loss reaches the recognition stage as hard
+gaps. Network shaping therefore reaches the codec as loss and latency, never as bitrate
+starvation. Line-level source pointers live in the thesis analysis repo
+(`netem_verify/OPUS_PIPELINE_ASYMMETRY.md`).
+
 ## Legacy
 
 `iva-cui-backend/` and parts of the upstream Unity machinery (quest progression, filler
